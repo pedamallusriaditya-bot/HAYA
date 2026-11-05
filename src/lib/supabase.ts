@@ -1,16 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 
 const url =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) ||
-  (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) ||
-  'https://rvonbjizjwkogwfulery.supabase.co';
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL
+    ? import.meta.env.VITE_SUPABASE_URL
+    : '';
 const anonKey =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) ||
-  (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ2b25iaml6andrb2d3ZnVsZXJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0MDYwNzMsImV4cCI6MjEwNzk4MjA3M30.AgF3y84I95dd3Xy59yXobAOMJzAXUwZr7MGEYWgrH6E';
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY
+    ? import.meta.env.VITE_SUPABASE_ANON_KEY
+    : '';
 
 if (!url || !anonKey) {
-  throw new Error('Supabase env vars missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env');
+  throw new Error(
+    'Missing Supabase credentials: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set. ' +
+    'Please copy .env.example to .env and configure your Supabase project credentials.'
+  );
 }
 
 export const supabase = createClient(url, anonKey, {
@@ -41,7 +44,7 @@ export type Profile = {
 export type GameScore = {
   id: string;
   game: string;
-  difficulty: string | null;
+  difficulty: string;
   score: number;
   score_type: 'score' | 'time';
   created_at: string;

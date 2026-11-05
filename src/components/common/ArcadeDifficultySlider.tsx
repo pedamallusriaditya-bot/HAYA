@@ -1,17 +1,16 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { Cpu, Flame, Shield } from 'lucide-react';
 import type { DifficultyTier } from '../bot/botConfigs';
+import {
+  type UniversalDifficultyItem,
+  sortDifficultiesAscending,
+  getPercentForIndex,
+  getIndexFromPercent,
+  findDifficultyIndex,
+  getMiddleIndex,
+} from './arcadeDifficultyHelper';
 
-export type UniversalDifficultyItem = {
-  level?: number;
-  id: string | number;
-  name: string;
-  badge?: string;
-  color?: string;
-  description?: string;
-  depthOrDetail?: string;
-  honestyNote?: string;
-};
+export { type UniversalDifficultyItem };
 
 export type ArcadeDifficultySliderProps = {
   difficulties: (DifficultyTier | UniversalDifficultyItem)[];
@@ -33,33 +32,44 @@ export default function ArcadeDifficultySlider({
   const [isDragging, setIsDragging] = useState(false);
   const [dragPercent, setDragPercent] = useState<number | null>(null);
 
-  const numLevels = difficulties.length;
+  // 1. Sort a copy of difficulties by level ascending (easiest to hardest)
+  const sortedDifficulties = useMemo(
+    () => sortDifficultiesAscending(difficulties),
+    [difficulties]
+  );
+
+  const numLevels = sortedDifficulties.length;
   const maxIndex = Math.max(0, numLevels - 1);
+  const middleIndex = getMiddleIndex(numLevels);
 
-  // Find index of current selected item (hardest = index 0 on left, easiest = maxIndex on right)
-  const selectedIndex = difficulties.findIndex(
-    (d) =>
-      String(d.id) === String(selectedId) ||
-      (d.level !== undefined && d.level === Number(selectedId))
-  );
+  // Find index of current selected item (easiest = index 0 on left, hardest = maxIndex on right)
+  const selectedIndex = findDifficultyIndex(sortedDifficulties, selectedId);
+  const activeIndex = selectedIndex >= 0 ? selectedIndex : middleIndex;
+  const activeItem = sortedDifficulties[activeIndex] || sortedDifficulties[0];
 
-  const activeIndex = selectedIndex >= 0 ? selectedIndex : 0;
-  const activeItem = difficulties[activeIndex] || difficulties[0];
-
-  // Helper to get percentage for a given index (0..maxIndex -> 0%..100%)
-  const getPercentForIndex = useCallback(
-    (index: number) => {
-      if (maxIndex === 0) return 50;
-      return (index / maxIndex) * 100;
-    },
-    [maxIndex]
-  );
+  // 5. If selectedId matches no item, call onSelect with the middle item once on mount
+  const hasMountedRef = useRef(false);
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      if (selectedIndex < 0 && sortedDifficulties.length > 0) {
+        const midItem = sortedDifficulties[middleIndex];
+        if (midItem) {
+          const targetVal =
+            midItem.level !== undefined && typeof selectedId === 'number'
+              ? midItem.level
+              : midItem.id;
+          onSelect(targetVal);
+        }
+      }
+    }
+  }, [selectedIndex, sortedDifficulties, middleIndex, selectedId, onSelect]);
 
   // Helper to commit index selection
   const selectIndex = useCallback(
     (idx: number) => {
       const clamped = Math.max(0, Math.min(maxIndex, idx));
-      const target = difficulties[clamped];
+      const target = sortedDifficulties[clamped];
       if (!target) return;
       const targetVal =
         target.level !== undefined && typeof selectedId === 'number'
@@ -67,26 +77,28 @@ export default function ArcadeDifficultySlider({
           : target.id;
       onSelect(targetVal);
     },
-    [difficulties, maxIndex, selectedId, onSelect]
+    [sortedDifficulties, maxIndex, selectedId, onSelect]
   );
 
   // Calculate index from a pointer X position relative to track
   const getIndexFromPointer = useCallback(
     (clientX: number): { index: number; percent: number } => {
-      if (!trackRef.current) return { index: activeIndex, percent: getPercentForIndex(activeIndex) };
+      if (!trackRef.current) {
+        return { index: activeIndex, percent: getPercentForIndex(activeIndex, maxIndex) };
+      }
       const rect = trackRef.current.getBoundingClientRect();
       const width = rect.width;
       if (width <= 0) return { index: 0, percent: 0 };
 
       const offsetX = Math.max(0, Math.min(width, clientX - rect.left));
-      const rawRatio = offsetX / width;
-      const nearestIdx = Math.round(rawRatio * maxIndex);
+      const rawPercent = (offsetX / width) * 100;
+      const nearestIdx = getIndexFromPercent(rawPercent, maxIndex);
       return {
         index: nearestIdx,
-        percent: rawRatio * 100,
+        percent: rawPercent,
       };
     },
-    [activeIndex, getPercentForIndex, maxIndex]
+    [activeIndex, maxIndex]
   );
 
   // Pointer Down (Click or Drag Start)
@@ -135,28 +147,27 @@ export default function ArcadeDifficultySlider({
   };
 
   // Keyboard navigation
+  // ArrowRight/ArrowUp = harder, ArrowLeft/ArrowDown = easier, Home = easiest, End = hardest
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
       e.preventDefault();
-      // ArrowLeft moves toward left (Harder = lower index in hardest-first order)
       selectIndex(activeIndex - 1);
     } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
       e.preventDefault();
-      // ArrowRight moves toward right (Easier = higher index in hardest-first order)
       selectIndex(activeIndex + 1);
     } else if (e.key === 'Home') {
       e.preventDefault();
-      selectIndex(0); // Leftmost = Hardest
+      selectIndex(0); // Leftmost = Easiest
     } else if (e.key === 'End') {
       e.preventDefault();
-      selectIndex(maxIndex); // Rightmost = Easiest
+      selectIndex(maxIndex); // Rightmost = Hardest
     }
   };
 
-  // Current percentage position of thumb (0% = left = hardest, 100% = right = easiest)
+  // Current percentage position of thumb (0% = left = easiest, 100% = right = hardest)
   const currentPercent = isDragging && dragPercent !== null
     ? dragPercent
-    : getPercentForIndex(activeIndex);
+    : getPercentForIndex(activeIndex, maxIndex);
 
   // Formatted level name & badge
   const levelBadge = activeItem.badge || (activeItem.level !== undefined ? `Level ${activeItem.level}` : '');
@@ -194,7 +205,7 @@ export default function ArcadeDifficultySlider({
           aria-label={title}
           aria-valuemin={1}
           aria-valuemax={numLevels}
-          aria-valuenow={maxIndex - activeIndex + 1}
+          aria-valuenow={activeIndex + 1}
           aria-valuetext={`${levelBadge} ${levelName}`}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -205,31 +216,39 @@ export default function ArcadeDifficultySlider({
         >
           {/* Outer Rail / Channel */}
           <div className="w-full h-2.5 rounded-full bg-slate-900 border border-slate-700/80 shadow-inner overflow-hidden relative">
-            {/* Active filled segment from Left (Hardest) to Thumb */}
+            {/* Active filled segment from Left (Easiest) to Thumb, gradient anchored to full rail width */}
             <div
-              className={`h-full bg-gradient-to-r from-rose-500/80 via-amber-400 to-emerald-400 ${
+              className={`h-full absolute left-0 top-0 overflow-hidden ${
                 isDragging ? '' : 'transition-all duration-200 ease-out motion-reduce:transition-none'
               }`}
               style={{ width: `${currentPercent}%` }}
-            />
+            >
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500"
+                style={{
+                  width: currentPercent > 0 ? `${(100 / currentPercent) * 100}%` : '100%',
+                }}
+              />
+            </div>
           </div>
 
-          {/* Tick Marks for each selectable level */}
-          <div className="absolute inset-x-0 pointer-events-none flex justify-between px-0.5">
-            {difficulties.map((d, i) => {
+          {/* Tick Marks for each selectable level: vertically centered on rail & horizontally aligned with thumb */}
+          <div className="absolute inset-0 pointer-events-none">
+            {sortedDifficulties.map((d, i) => {
+              const dotPercent = getPercentForIndex(i, maxIndex);
               const isPassed = i <= activeIndex;
               const isCurrent = i === activeIndex;
               return (
                 <div
                   key={String(d.id || i)}
-                  className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                  className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full transition-colors ${
                     isCurrent
                       ? 'bg-amber-300 ring-2 ring-amber-400/60 scale-125'
                       : isPassed
                       ? 'bg-amber-500/80'
                       : 'bg-slate-700'
                   }`}
-                  style={{ transform: 'translateY(-50%)' }}
+                  style={{ left: `${dotPercent}%` }}
                 />
               );
             })}
@@ -266,18 +285,18 @@ export default function ArcadeDifficultySlider({
           </div>
         </div>
 
-        {/* Labels at each end: HARDEST on Left, EASIEST on Right */}
+        {/* Labels at each end: EASIEST on Left, HARDEST on Right */}
         <div className="flex items-center justify-between text-[10px] font-mono font-bold tracking-widest text-slate-500 pt-1.5 px-1">
-          <span className="flex items-center gap-1 text-rose-400/95 font-bold">
-            <Flame className="h-3 w-3 text-rose-400" />
-            HARDEST
+          <span className="flex items-center gap-1 text-emerald-400/95 font-bold">
+            <Shield className="h-3 w-3 text-emerald-400" />
+            EASIEST
           </span>
           <span className="text-[9px] xs:text-[10px] text-slate-500 font-normal">
             {numLevels} LEVELS · DRAG OR TAP
           </span>
-          <span className="flex items-center gap-1 text-emerald-400/95 font-bold">
-            EASIEST
-            <Shield className="h-3 w-3 text-emerald-400" />
+          <span className="flex items-center gap-1 text-rose-400/95 font-bold">
+            HARDEST
+            <Flame className="h-3 w-3 text-rose-400" />
           </span>
         </div>
       </div>

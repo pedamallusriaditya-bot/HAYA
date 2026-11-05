@@ -96,7 +96,10 @@ export default function LudoGame() {
     const myName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
 
     const ch = supabase.channel(`haya-match-${matchId}`, {
-      config: { presence: { key: myName } },
+      config: {
+        private: true,
+        presence: { key: myName },
+      },
     });
 
     matchChannelRef.current = ch;

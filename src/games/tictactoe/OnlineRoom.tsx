@@ -40,7 +40,10 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
   useEffect(() => {
     setInMatchStatus(true, 'tictactoe');
     const ch = supabase.channel(`haya-match-${matchId}`, {
-      config: { presence: { key: myName } },
+      config: {
+        private: true,
+        presence: { key: myName },
+      },
     });
 
     channelRef.current = ch;

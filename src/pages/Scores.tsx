@@ -30,7 +30,7 @@ import type { GameRecord } from '@/lib/supabase';
 
 type HighScoreRow = {
   game: string;
-  difficulty: string | null;
+  difficulty: string;
   score: number;
   score_type: string;
   created_at: string;
@@ -367,7 +367,7 @@ export default function Scores() {
                         <Medal className="h-3.5 w-3.5 text-amber-400 shrink-0" />
                       </div>
                       <div className="text-[10px] xs:text-xs font-mono text-slate-400 mt-0.5 truncate">
-                        {r.difficulty ? `${r.difficulty.toUpperCase()} · ` : ''}
+                        {r.difficulty && r.difficulty !== 'default' ? `${r.difficulty.toUpperCase()} · ` : ''}
                         {isTime ? 'BEST TIME' : 'MAX SCORE'}
                       </div>
                     </div>

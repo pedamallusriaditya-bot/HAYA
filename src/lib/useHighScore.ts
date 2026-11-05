@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/auth/AuthContext';
+import { supabase } from './supabase.ts';
+import { useAuth } from '../auth/useAuth.ts';
+
+/**
+ * Normalizes a difficulty argument so that null, undefined, or empty values
+ * map deterministically to 'default', matching database constraints.
+ */
+export function normalizeDifficulty(difficulty?: string | null): string {
+  if (!difficulty || typeof difficulty !== 'string' || difficulty.trim() === '') {
+    return 'default';
+  }
+  return difficulty.trim();
+}
 
 /**
  * Loads and persists the user's best score for a single-player game.
@@ -8,10 +19,11 @@ import { useAuth } from '@/auth/AuthContext';
  * constraint; we upsert here and only keep the better of the local vs stored
  * value so the UI never regresses.
  */
-export function useHighScore(game: string, difficulty: string | null = null) {
+export function useHighScore(game: string, rawDifficulty?: string | null) {
   const { user } = useAuth();
   const [best, setBest] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const difficulty = normalizeDifficulty(rawDifficulty);
 
   useEffect(() => {
     if (!user) {

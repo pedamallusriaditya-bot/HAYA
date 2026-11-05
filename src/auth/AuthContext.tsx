@@ -1,25 +1,21 @@
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
-import type { Session, User } from '@supabase/supabase-js';
+import { useEffect, useState, useCallback, type ReactNode } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { supabase, type Profile } from '@/lib/supabase';
-import { AUTHORIZED_EMAILS, isAuthorizedEmail } from './authUtils';
+import {
+  isAuthorizedEmail,
+  getAllowedEmails,
+  isMatchActive,
+  evaluateInactivity,
+  recordUserActivity,
+  createFallbackProfile,
+  LAST_ACTIVITY_KEY,
+  IN_MATCH_KEY,
+  LOGOUT_NOTICE_KEY,
+} from './authUtils';
+import { AuthContext, useAuth, type AuthState } from './useAuth';
 
-export { AUTHORIZED_EMAILS, isAuthorizedEmail };
-
-type AuthState = {
-  session: Session | null;
-  user: User | null;
-  profile: Profile | null;
-  loading: boolean;
-  logoutNotice: string | null;
-  clearLogoutNotice: () => void;
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string) => Promise<{ error: string | null }>;
-  devSignIn: (email: string, name: string) => void;
-  signOut: (reason?: string) => Promise<void>;
-  updateProfileState: (updated: Partial<Profile>) => void;
-};
-
-const AuthContext = createContext<AuthState | undefined>(undefined);
+// eslint-disable-next-line react-refresh/only-export-components
+export { useAuth, type AuthState };
 
 const DEV_ADITYA_UUID = '00000000-0000-0000-0000-000000000001';
 const DEV_HARIKA_UUID = '00000000-0000-0000-0000-000000000002';
@@ -32,7 +28,10 @@ function getInitialDevSession() {
     const { email, name } = JSON.parse(raw);
     if (!email || !isAuthorizedEmail(email)) return null;
 
-    const isHarika = email.toLowerCase() === 'pasulaharika61@gmail.com';
+    const allowed = getAllowedEmails();
+    const isHarika =
+      (allowed.length > 1 && email.toLowerCase() === allowed[1].toLowerCase()) ||
+      email.toLowerCase().includes('harika');
     const userId = isHarika ? DEV_HARIKA_UUID : DEV_ADITYA_UUID;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,7 +55,7 @@ function getInitialDevSession() {
       id: userId,
       email,
       display_name: name,
-      is_admin: true,
+      is_admin: false,
       preferences: { sound: true, music: true },
     };
     return { session: mockSession, profile: mockProfile };
@@ -93,20 +92,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, display_name, is_admin, avatar_data, preferences, created_at, updated_at')
+        .select('id, email, display_name, is_admin, avatar_data, created_at, updated_at')
         .eq('id', uid)
         .maybeSingle();
 
       if (error) {
         console.warn('[AuthContext] Profile load warning:', error.message);
         if (emailHint && isAuthorizedEmail(emailHint)) {
-          setProfile({
-            id: uid,
-            email: emailHint,
-            display_name: emailHint.includes('harika') ? 'Harika' : 'Aditya',
-            is_admin: true,
-            preferences: { sound: true, music: true },
-          });
+          setProfile(createFallbackProfile(uid, emailHint));
         }
         return;
       }
@@ -115,24 +108,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(data as Profile);
       } else if (emailHint && isAuthorizedEmail(emailHint)) {
         // Fallback profile if row hasn't been created yet
-        setProfile({
-          id: uid,
-          email: emailHint,
-          display_name: emailHint.includes('harika') ? 'Harika' : 'Aditya',
-          is_admin: true,
-          preferences: { sound: true, music: true },
-        });
+        setProfile(createFallbackProfile(uid, emailHint));
       }
     } catch (err) {
       console.warn('[AuthContext] Network error loading profile:', err);
       if (emailHint && isAuthorizedEmail(emailHint)) {
-        setProfile({
-          id: uid,
-          email: emailHint,
-          display_name: emailHint.includes('harika') ? 'Harika' : 'Aditya',
-          is_admin: true,
-          preferences: { sound: true, music: true },
-        });
+        setProfile(createFallbackProfile(uid, emailHint));
       }
     }
   }
@@ -222,50 +203,103 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [initialDev, signOut]);
 
-  // 5-Minute Inactivity Auto-Logout with Cross-Tab Sync
+  // 5-Minute Inactivity Auto-Logout with Cross-Tab Sync and Match-Aware Pause
   useEffect(() => {
     if (!session) return;
 
-    const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes (300,000 ms)
-
     // Set initial activity timestamp if none exists
-    if (!localStorage.getItem('haya_last_activity')) {
-      localStorage.setItem('haya_last_activity', String(Date.now()));
+    if (!localStorage.getItem(LAST_ACTIVITY_KEY)) {
+      recordUserActivity();
     }
 
+    let lastRecorded = 0;
     const recordActivity = () => {
-      localStorage.setItem('haya_last_activity', String(Date.now()));
+      const now = Date.now();
+      // Throttle rapid input events to at most once per second
+      if (now - lastRecorded >= 1000) {
+        lastRecorded = now;
+        recordUserActivity(localStorage, now);
+      }
     };
+
+    let wasInMatch = isMatchActive();
 
     // Check inactivity periodically
     const checkInterval = setInterval(() => {
-      const last = Number(localStorage.getItem('haya_last_activity') || Date.now());
-      const idleTime = Date.now() - last;
-      if (idleTime >= INACTIVITY_TIMEOUT_MS) {
+      const currentInMatch = isMatchActive();
+
+      // If a match just ended, grant a fresh 5-minute countdown
+      if (wasInMatch && !currentInMatch) {
+        recordUserActivity();
+      }
+      wasInMatch = currentInMatch;
+
+      const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || Date.now());
+      const evaluation = evaluateInactivity(last, Date.now(), currentInMatch);
+
+      if (evaluation.shouldLogout) {
         clearInterval(checkInterval);
         void signOut('You were logged out due to 5 minutes of inactivity.');
       }
-    }, 10000); // Check every 10 seconds
+    }, 5000); // Check every 5 seconds
 
     // Cross-tab storage listener
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'haya_last_activity') {
+      if (e.key === LAST_ACTIVITY_KEY) {
         // Activity detected in another tab
-      } else if (e.key === 'haya_logout_notice' && e.newValue) {
+      } else if (e.key === IN_MATCH_KEY) {
+        // Match status updated in another tab
+        if (!e.newValue) {
+          // Match ended in another tab: restart with fresh 5 minutes
+          recordUserActivity();
+        }
+      } else if (e.key === LOGOUT_NOTICE_KEY && e.newValue) {
         // Logged out in another tab
         void signOut(e.newValue);
       }
     };
 
-    // Listen to genuine user input events only (not background polling or heartbeats)
-    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    // Route change listener (hashchange) to detect entering or leaving a match
+    const handleHashChange = () => {
+      const currentInMatch = isMatchActive();
+      if (wasInMatch && !currentInMatch) {
+        // Just exited a match: grant a fresh 5-minute countdown
+        recordUserActivity();
+      }
+      wasInMatch = currentInMatch;
+      recordActivity();
+    };
+
+    // Tab visibility listener (tab becoming visible triggers activity)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        recordActivity();
+      }
+    };
+
+    // Listen to user input events:
+    // mousemove, mousedown, keydown, touchstart, scroll, pointerdown, pointermove, wheel
+    const events = [
+      'mousemove',
+      'mousedown',
+      'keydown',
+      'touchstart',
+      'scroll',
+      'pointerdown',
+      'pointermove',
+      'wheel',
+    ];
     events.forEach((evt) => window.addEventListener(evt, recordActivity, { passive: true }));
     window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('hashchange', handleHashChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       clearInterval(checkInterval);
       events.forEach((evt) => window.removeEventListener(evt, recordActivity));
       window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('hashchange', handleHashChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [session, signOut]);
 
@@ -356,10 +390,4 @@ function translateAuthError(msg: string): string {
     return 'That account already exists. Try signing in instead.';
   }
   return msg;
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
-  return ctx;
 }

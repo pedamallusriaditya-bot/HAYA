@@ -1,18 +1,30 @@
-import { ArrowLeft, BookOpen } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, BookOpen, Loader2 } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
 import { Link, useRouter } from '@/router';
 import { getGame } from '@/games/registry';
-import SudokuGame from '@/games/sudoku/SudokuGame';
-import MinesweeperGame from '@/games/minesweeper/MinesweeperGame';
-import Game2048 from '@/games/game2048/Game2048';
-import MazeGame from '@/games/maze/MazeGame';
-import MemoryGame from '@/games/memory/MemoryGame';
-import TicTacToeGame from '@/games/tictactoe/TicTacToeGame';
-import ChessGame from '@/games/chess/ChessGame';
-import Connect4Game from '@/games/connect4/Connect4Game';
-import LudoGame from '@/games/ludo/LudoGame';
-import SnakesGame from '@/games/snakes/SnakesGame';
-import CarromGame from '@/games/carrom/CarromGame';
+
+const SudokuGame = lazy(() => import('@/games/sudoku/SudokuGame'));
+const MinesweeperGame = lazy(() => import('@/games/minesweeper/MinesweeperGame'));
+const Game2048 = lazy(() => import('@/games/game2048/Game2048'));
+const MazeGame = lazy(() => import('@/games/maze/MazeGame'));
+const MemoryGame = lazy(() => import('@/games/memory/MemoryGame'));
+const TicTacToeGame = lazy(() => import('@/games/tictactoe/TicTacToeGame'));
+const ChessGame = lazy(() => import('@/games/chess/ChessGame'));
+const Connect4Game = lazy(() => import('@/games/connect4/Connect4Game'));
+const LudoGame = lazy(() => import('@/games/ludo/LudoGame'));
+const SnakesGame = lazy(() => import('@/games/snakes/SnakesGame'));
+const CarromGame = lazy(() => import('@/games/carrom/CarromGame'));
+
+function ArcadeLoadingFallback() {
+  return (
+    <div className="p-8 sm:p-14 text-center">
+      <Loader2 className="h-8 w-8 animate-spin text-amber-400 mx-auto mb-3" />
+      <p className="text-xs sm:text-sm text-slate-400 font-mono uppercase tracking-widest">
+        Powering up arcade cabinet...
+      </p>
+    </div>
+  );
+}
 
 export default function GamePlay({ gameId }: { gameId: string }) {
   const game = getGame(gameId);
@@ -80,18 +92,20 @@ export default function GamePlay({ gameId }: { gameId: string }) {
         </div>
       )}
 
-      <div className="arcade-cabinet p-2.5 xs:p-3.5 sm:p-6 lg:p-7">
-        {gameId === 'sudoku' && <SudokuGame />}
-        {gameId === 'minesweeper' && <MinesweeperGame />}
-        {gameId === '2048' && <Game2048 />}
-        {gameId === 'maze' && <MazeGame />}
-        {gameId === 'memory' && <MemoryGame />}
-        {gameId === 'tictactoe' && <TicTacToeGame />}
-        {gameId === 'chess' && <ChessGame />}
-        {gameId === 'connect4' && <Connect4Game />}
-        {gameId === 'ludo' && <LudoGame />}
-        {gameId === 'snakes' && <SnakesGame />}
-        {gameId === 'carrom' && <CarromGame />}
+      <div className="arcade-cabinet p-2.5 xs:p-3.5 sm:p-6 lg:p-7 min-h-[400px] flex flex-col justify-center">
+        <Suspense fallback={<ArcadeLoadingFallback />}>
+          {gameId === 'sudoku' && <SudokuGame />}
+          {gameId === 'minesweeper' && <MinesweeperGame />}
+          {gameId === '2048' && <Game2048 />}
+          {gameId === 'maze' && <MazeGame />}
+          {gameId === 'memory' && <MemoryGame />}
+          {gameId === 'tictactoe' && <TicTacToeGame />}
+          {gameId === 'chess' && <ChessGame />}
+          {gameId === 'connect4' && <Connect4Game />}
+          {gameId === 'ludo' && <LudoGame />}
+          {gameId === 'snakes' && <SnakesGame />}
+          {gameId === 'carrom' && <CarromGame />}
+        </Suspense>
       </div>
     </div>
   );

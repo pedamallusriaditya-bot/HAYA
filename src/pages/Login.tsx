@@ -1,27 +1,7 @@
 import { useState } from 'react';
 import { Gamepad2, Lock, Mail, Eye, EyeOff, Sparkles, ArrowRight, AlertCircle, Loader2, User } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
-
-const PLAYERS = [
-  {
-    name: 'Aditya',
-    email: 'pedamallusriaditya@gmail.com',
-    tag: 'Player 1',
-    emoji: '🎮',
-    accent: 'from-sky-500 to-indigo-600',
-    border: 'border-sky-500/50 hover:border-sky-400',
-    activeGlow: 'ring-2 ring-sky-400 bg-sky-500/10 shadow-lg shadow-sky-500/20',
-  },
-  {
-    name: 'Harika',
-    email: 'pasulaharika61@gmail.com',
-    tag: 'Player 2',
-    emoji: '✨',
-    accent: 'from-fuchsia-500 to-pink-600',
-    border: 'border-fuchsia-500/50 hover:border-fuchsia-400',
-    activeGlow: 'ring-2 ring-fuchsia-400 bg-fuchsia-500/10 shadow-lg shadow-fuchsia-500/20',
-  },
-];
+import { getAllowedEmails } from '@/auth/authUtils';
 
 export default function Login() {
   const { signIn, session, devSignIn, logoutNotice, clearLogoutNotice } = useAuth();
@@ -30,6 +10,31 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const allowed = getAllowedEmails();
+  const player1Email = allowed[0] || '';
+  const player2Email = allowed[1] || '';
+
+  const PLAYERS = [
+    {
+      name: 'Aditya',
+      email: player1Email,
+      tag: 'Player 1',
+      emoji: '🎮',
+      accent: 'from-sky-500 to-indigo-600',
+      border: 'border-sky-500/50 hover:border-sky-400',
+      activeGlow: 'ring-2 ring-sky-400 bg-sky-500/10 shadow-lg shadow-sky-500/20',
+    },
+    {
+      name: 'Harika',
+      email: player2Email,
+      tag: 'Player 2',
+      emoji: '✨',
+      accent: 'from-fuchsia-500 to-pink-600',
+      border: 'border-fuchsia-500/50 hover:border-fuchsia-400',
+      activeGlow: 'ring-2 ring-fuchsia-400 bg-fuchsia-500/10 shadow-lg shadow-fuchsia-500/20',
+    },
+  ];
 
   if (session) return null;
 
@@ -246,15 +251,17 @@ export default function Login() {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => devSignIn?.('pasulaharika61@gmail.com', 'Harika')}
-                    className="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold bg-fuchsia-600/30 border border-fuchsia-500/50 text-fuchsia-300 hover:bg-fuchsia-600/50 transition"
+                    onClick={() => devSignIn?.(player2Email, 'Harika')}
+                    disabled={!player2Email}
+                    className="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold bg-fuchsia-600/30 border border-fuchsia-500/50 text-fuchsia-300 hover:bg-fuchsia-600/50 transition disabled:opacity-40"
                   >
                     ✨ Harika (P2)
                   </button>
                   <button
                     type="button"
-                    onClick={() => devSignIn?.('pedamallusriaditya@gmail.com', 'Aditya')}
-                    className="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold bg-sky-600/30 border border-sky-500/50 text-sky-300 hover:bg-sky-600/50 transition"
+                    onClick={() => devSignIn?.(player1Email, 'Aditya')}
+                    disabled={!player1Email}
+                    className="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold bg-sky-600/30 border border-sky-500/50 text-sky-300 hover:bg-sky-600/50 transition disabled:opacity-40"
                   >
                     🎮 Aditya (P1)
                   </button>

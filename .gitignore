@@ -1,3 +1,4 @@
+# Logs
 logs
 *.log
 npm-debug.log*
@@ -6,22 +7,51 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+
+# Environment & Credentials (Secrets)
+.env
+.env.*
+!.env.example
+.env.local
 *.local
 
+# Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-.env
-.env.*
-!.env.example
-.env.local
+
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Caches & Diagnostics
+.eslintcache
+.vite/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+
+# Temporary files & archives
 *.zip
+*.tar.gz
+*.tgz
+*.bak
+*.tmp
+*~

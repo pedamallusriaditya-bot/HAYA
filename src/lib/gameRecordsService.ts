@@ -247,13 +247,17 @@ export async function loadUserPreferences(
 
   try {
     const { data, error } = await supabase
-      .from('profiles')
-      .select('preferences')
-      .eq('id', userId)
+      .from('user_preferences')
+      .select('sound, music, theme')
+      .eq('user_id', userId)
       .maybeSingle();
 
-    if (!error && data?.preferences) {
-      const prefs = { ...defaultPrefs, ...data.preferences };
+    if (!error && data) {
+      const prefs: UserPreferences = {
+        sound: typeof data.sound === 'boolean' ? data.sound : true,
+        music: typeof data.music === 'boolean' ? data.music : true,
+        theme: data.theme || 'arcade',
+      };
       if (typeof window !== 'undefined') {
         localStorage.setItem(`${PREFS_STORAGE_PREFIX}${userId}`, JSON.stringify(prefs));
       }
@@ -286,12 +290,17 @@ export async function saveUserPreferences(
 
   try {
     const { error } = await supabase
-      .from('profiles')
-      .update({
-        preferences,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', userId);
+      .from('user_preferences')
+      .upsert(
+        {
+          user_id: userId,
+          sound: preferences.sound,
+          music: preferences.music,
+          theme: preferences.theme || 'arcade',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' }
+      );
 
     if (error) {
       console.warn('[gameRecordsService] Remote prefs update error:', error.message);

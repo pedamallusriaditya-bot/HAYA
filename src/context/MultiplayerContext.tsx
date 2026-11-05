@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/auth/AuthContext';
+import { getAllowedEmails, setMatchActiveState } from '@/auth/authUtils';
 import { useRouter } from '@/router';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import type { AvatarConfig } from '@/types/avatar';
@@ -46,23 +47,31 @@ type MultiplayerContextType = {
 
 const MultiplayerContext = createContext<MultiplayerContextType | undefined>(undefined);
 
-const AUTHORIZED_ACCOUNTS = [
-  { email: 'pedamallusriaditya@gmail.com', name: 'Aditya', emoji: '🎮' },
-  { email: 'pasulaharika61@gmail.com', name: 'Harika', emoji: '✨' },
-];
+function getAuthorizedAccounts(): { email: string; name: string; emoji: string }[] {
+  const allowed = getAllowedEmails();
+  const p1 = allowed[0] || '';
+  const p2 = allowed[1] || '';
+  return [
+    { email: p1, name: 'Aditya', emoji: '🎮' },
+    { email: p2, name: 'Harika', emoji: '✨' },
+  ];
+}
 
 export function MultiplayerProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { navigate } = useRouter();
 
+  const accounts = getAuthorizedAccounts();
   const myEmail = user?.email?.toLowerCase().trim() || '';
-  const myFriendInfo = AUTHORIZED_ACCOUNTS.find((a) => a.email !== myEmail) || {
-    email: myEmail === 'pedamallusriaditya@gmail.com' ? 'pasulaharika61@gmail.com' : 'pedamallusriaditya@gmail.com',
-    name: myEmail === 'pedamallusriaditya@gmail.com' ? 'Harika' : 'Aditya',
-    emoji: myEmail === 'pedamallusriaditya@gmail.com' ? '✨' : '🎮',
+  const myFriendInfo = accounts.find((a) => a.email && a.email.toLowerCase() !== myEmail) || {
+    email: accounts[0]?.email.toLowerCase() === myEmail ? (accounts[1]?.email || '') : (accounts[0]?.email || ''),
+    name: accounts[0]?.email.toLowerCase() === myEmail ? 'Harika' : 'Aditya',
+    emoji: accounts[0]?.email.toLowerCase() === myEmail ? '✨' : '🎮',
   };
 
-  const myDisplayName = AUTHORIZED_ACCOUNTS.find((a) => a.email === myEmail)?.name || myEmail.split('@')[0];
+  const myDisplayName =
+    accounts.find((a) => a.email && a.email.toLowerCase() === myEmail)?.name ||
+    (myEmail ? myEmail.split('@')[0] : 'Player');
 
   const [friend, setFriend] = useState<FriendState>({
     email: myFriendInfo.email,
@@ -110,7 +119,6 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
 
     void lobbyChannelRef.current.track({
       userId: user.id,
-      email: myEmail,
       displayName: myDisplayName,
       avatar: myAvatar,
       status,
@@ -124,7 +132,10 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     if (!user || !myEmail) return;
 
     const ch = supabase.channel('haya-global-lobby', {
-      config: { presence: { key: user.id } },
+      config: {
+        private: true,
+        presence: { key: user.id },
+      },
     });
 
     lobbyChannelRef.current = ch;
@@ -142,7 +153,10 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       Object.values(state).forEach((presences) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (presences as any[]).forEach((p) => {
-          if (p.email?.toLowerCase() === myFriendInfo.email.toLowerCase()) {
+          const isFriend =
+            (p.userId && p.userId !== user.id) ||
+            (p.displayName && p.displayName.toLowerCase() === myFriendInfo.name.toLowerCase());
+          if (isFriend) {
             friendOnline = true;
             friendStatus = p.status || 'online';
             friendGame = p.currentGame || null;
@@ -163,7 +177,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       }));
     })
       .on('presence', { event: 'leave' }, ({ key }) => {
-        if (key === myFriendInfo.email || key === friend.email) {
+        if (key !== user.id) {
           setFriend((prev) => ({ ...prev, status: 'offline', currentGame: null }));
         }
       })
@@ -248,7 +262,9 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     if (!user || !myEmail) return;
 
     const channel = supabase
-      .channel('haya-invitations-db')
+      .channel('haya-invitations-db', {
+        config: { private: true },
+      })
       .on(
         'postgres_changes',
         {
@@ -445,12 +461,20 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
 
   const setInMatchStatus = useCallback((inMatch: boolean, gameId?: string) => {
     updatePresence(inMatch ? 'in_match' : 'online', gameId || null);
+    setMatchActiveState(inMatch);
   }, [updatePresence]);
 
   const exitActiveMatch = useCallback(() => {
     setActiveMatch(null);
     updatePresence('online', null);
+    setMatchActiveState(false);
   }, [updatePresence]);
+
+  useEffect(() => {
+    if (activeMatch) {
+      setMatchActiveState(true);
+    }
+  }, [activeMatch]);
 
   return (
     <MultiplayerContext.Provider
