@@ -5,10 +5,13 @@ import {
   isMatchActive,
   recordUserActivity,
   setMatchActiveState,
+  clearMatchActiveState,
   createFallbackProfile,
   INACTIVITY_TIMEOUT_MS,
+  MAX_MATCH_DURATION_MS,
   LAST_ACTIVITY_KEY,
   IN_MATCH_KEY,
+  IN_MATCH_TIME_KEY,
 } from './authUtils.ts';
 
 test('Inactivity Manager: Normal 5-minute timeout countdown', () => {
@@ -75,22 +78,135 @@ test('Inactivity Manager: Paused during active game matches', () => {
   assert.equal(longMatchCheck.isPaused, true);
 });
 
-test('Inactivity Manager: Route and match state detection', () => {
-  // Routes under /play/ are active game machines
-  assert.equal(isMatchActive('/play/carrom'), true);
-  assert.equal(isMatchActive('/play/chess'), true);
-  assert.equal(isMatchActive('/play/ludo?match=online_123'), true);
-  assert.equal(isMatchActive('/play/tictactoe'), true);
+test('Inactivity Manager: Online match vs solo and bot game route detection', () => {
+  // Solo and bot game routes must NOT return true - only online matches pause inactivity
+  assert.equal(isMatchActive('/play/carrom'), false);
+  assert.equal(isMatchActive('/play/chess'), false);
+  assert.equal(isMatchActive('/play/2048'), false);
+  assert.equal(isMatchActive('/play/sudoku'), false);
+  assert.equal(isMatchActive('/play/tictactoe'), false);
+  assert.equal(isMatchActive('/play/connect4'), false);
+  assert.equal(isMatchActive('/play/ludo'), false);
+  assert.equal(isMatchActive('/play/snakes'), false);
 
-  // Non-game routes are not matches
+  // Non-game routes are also not matches
   assert.equal(isMatchActive('/'), false);
   assert.equal(isMatchActive('/scores'), false);
   assert.equal(isMatchActive('/avatar'), false);
   assert.equal(isMatchActive('/singleplayer'), false);
 
-  // Explicit inMatch flag overrides route
+  // Active match object (e.g. from MultiplayerContext activeMatch) returns true
+  assert.equal(
+    isMatchActive({ matchId: 'match_123', gameId: 'chess', role: 'host', opponentName: 'Player2' }),
+    true
+  );
+
+  // Explicit inMatch boolean flag returns true
   assert.equal(isMatchActive('/scores', true), true);
   assert.equal(isMatchActive(undefined, true), true);
+  assert.equal(isMatchActive(true), true);
+  assert.equal(isMatchActive(false), false);
+  assert.equal(isMatchActive(null), false);
+});
+
+test('Inactivity Manager: Solo and bot games time out after 5 minutes', () => {
+  const start = 1_000_000;
+  // A solo 2048 or chess bot player is on a /play/ route
+  const isMatch = isMatchActive('/play/2048');
+  assert.equal(isMatch, false, 'Solo game route must not be treated as an active match');
+
+  // 4 minutes without input: still active
+  const fourMin = evaluateInactivity(start, start + 4 * 60 * 1000, isMatch);
+  assert.equal(fourMin.shouldLogout, false);
+  assert.equal(fourMin.isPaused, false);
+  assert.equal(fourMin.remainingMs, 60_000);
+
+  // 5 minutes without input: auto-logout triggers
+  const fiveMin = evaluateInactivity(start, start + INACTIVITY_TIMEOUT_MS, isMatch);
+  assert.equal(fiveMin.shouldLogout, true);
+  assert.equal(fiveMin.isPaused, false);
+  assert.equal(fiveMin.remainingMs, 0);
+});
+
+test('Inactivity Manager: Capped at 2 hours without activity (stale match auto-logout)', () => {
+  const start = 1_000_000;
+
+  // Active online match within 2 hours: timer is paused
+  const match10Min = evaluateInactivity(start, start + 10 * 60 * 1000, true);
+  assert.equal(match10Min.shouldLogout, false);
+  assert.equal(match10Min.isPaused, true);
+
+  const match1Hour = evaluateInactivity(start, start + 60 * 60 * 1000, true);
+  assert.equal(match1Hour.shouldLogout, false);
+  assert.equal(match1Hour.isPaused, true);
+
+  const matchJustBefore2Hours = evaluateInactivity(start, start + MAX_MATCH_DURATION_MS - 1000, true);
+  assert.equal(matchJustBefore2Hours.shouldLogout, false);
+  assert.equal(matchJustBefore2Hours.isPaused, true);
+
+  // Over 2 hours without activity: treated as stale, auto-logout triggers
+  const matchAt2Hours = evaluateInactivity(start, start + MAX_MATCH_DURATION_MS, true);
+  assert.equal(matchAt2Hours.shouldLogout, true, 'Match inactive for >= 2 hours must trigger logout');
+  assert.equal(matchAt2Hours.isPaused, false);
+  assert.equal(matchAt2Hours.remainingMs, 0);
+
+  const matchPast2Hours = evaluateInactivity(start, start + MAX_MATCH_DURATION_MS + 60_000, true);
+  assert.equal(matchPast2Hours.shouldLogout, true);
+  assert.equal(matchPast2Hours.isPaused, false);
+});
+
+test('Inactivity Manager: isMatchActive treats flag set > 2 hours without activity as stale', () => {
+  const storage = new Map<string, string>();
+  const mockStorage = {
+    getItem: (k: string) => storage.get(k) ?? null,
+    setItem: (k: string, v: string) => storage.set(k, v),
+    removeItem: (k: string) => storage.delete(k),
+  };
+
+  const startTime = 10_000_000;
+  setMatchActiveState(true, mockStorage, startTime);
+  recordUserActivity(mockStorage, startTime);
+  assert.equal(mockStorage.getItem(IN_MATCH_KEY), 'true');
+
+  // After 30 minutes: match is still active
+  const check30Min = isMatchActive(null, mockStorage, startTime + 30 * 60 * 1000, startTime);
+  assert.equal(check30Min, true);
+  assert.equal(mockStorage.getItem(IN_MATCH_KEY), 'true');
+
+  // After 2 hours + 10 seconds without activity: stale! Returns false and clears storage flag
+  const staleTime = startTime + MAX_MATCH_DURATION_MS + 10_000;
+  const checkStale = isMatchActive(null, mockStorage, staleTime, startTime);
+  assert.equal(checkStale, false, 'isMatchActive must return false when flag is stale (> 2 hours without activity)');
+  assert.equal(mockStorage.getItem(IN_MATCH_KEY), null, 'Stale flag must be cleared from storage');
+  assert.equal(mockStorage.getItem(IN_MATCH_TIME_KEY), null);
+});
+
+test('Inactivity Manager: Clears haya_in_match on app startup and logout', () => {
+  const storage = new Map<string, string>();
+  const mockStorage = {
+    getItem: (k: string) => storage.get(k) ?? null,
+    setItem: (k: string, v: string) => storage.set(k, v),
+    removeItem: (k: string) => storage.delete(k),
+  };
+
+  // Simulate stale flag left from a previously interrupted match
+  mockStorage.setItem(IN_MATCH_KEY, 'true');
+  mockStorage.setItem(IN_MATCH_TIME_KEY, '1000000');
+  assert.equal(mockStorage.getItem(IN_MATCH_KEY), 'true');
+
+  // App startup clears haya_in_match
+  clearMatchActiveState(mockStorage);
+  assert.equal(mockStorage.getItem(IN_MATCH_KEY), null);
+  assert.equal(mockStorage.getItem(IN_MATCH_TIME_KEY), null);
+
+  // Player enters a match
+  setMatchActiveState(true, mockStorage, 2_000_000);
+  assert.equal(mockStorage.getItem(IN_MATCH_KEY), 'true');
+
+  // Player logs out: clears haya_in_match
+  clearMatchActiveState(mockStorage);
+  assert.equal(mockStorage.getItem(IN_MATCH_KEY), null);
+  assert.equal(mockStorage.getItem(IN_MATCH_TIME_KEY), null);
 });
 
 test('Inactivity Manager: Restarts with fresh 5 minutes when match ends', () => {

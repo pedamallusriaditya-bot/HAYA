@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 if (mock && typeof mock.module === 'function') {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (mock as any).module('./supabase.ts', {
-    exports: {
+    namedExports: {
       supabase: {
         from: () => ({
           select: () => ({

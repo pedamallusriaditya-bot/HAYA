@@ -8,6 +8,7 @@ import {
   evaluateInactivity,
   recordUserActivity,
   createFallbackProfile,
+  clearMatchActiveState,
   LAST_ACTIVITY_KEY,
   IN_MATCH_KEY,
   LOGOUT_NOTICE_KEY,
@@ -63,6 +64,9 @@ function getInitialDevSession() {
     return null;
   }
 }
+
+// Clear any leftover in-match state on module initialization
+clearMatchActiveState();
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const initialDev = getInitialDevSession();
@@ -136,6 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async (reason?: string) => {
     localStorage.removeItem('haya_dev_auth');
     localStorage.removeItem('haya_last_activity');
+    clearMatchActiveState(localStorage);
     if (reason) {
       localStorage.setItem('haya_logout_notice', reason);
       setLogoutNotice(reason);
@@ -222,11 +227,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    let wasInMatch = isMatchActive();
+    const nowInit = Date.now();
+    const lastInit = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || nowInit);
+    let wasInMatch = isMatchActive(undefined, localStorage, nowInit, lastInit);
 
     // Check inactivity periodically
     const checkInterval = setInterval(() => {
-      const currentInMatch = isMatchActive();
+      const now = Date.now();
+      const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || now);
+      const currentInMatch = isMatchActive(undefined, localStorage, now, last);
 
       // If a match just ended, grant a fresh 5-minute countdown
       if (wasInMatch && !currentInMatch) {
@@ -234,8 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       wasInMatch = currentInMatch;
 
-      const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || Date.now());
-      const evaluation = evaluateInactivity(last, Date.now(), currentInMatch);
+      const evaluation = evaluateInactivity(last, now, currentInMatch);
 
       if (evaluation.shouldLogout) {
         clearInterval(checkInterval);
@@ -261,7 +269,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Route change listener (hashchange) to detect entering or leaving a match
     const handleHashChange = () => {
-      const currentInMatch = isMatchActive();
+      const now = Date.now();
+      const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || now);
+      const currentInMatch = isMatchActive(undefined, localStorage, now, last);
       if (wasInMatch && !currentInMatch) {
         // Just exited a match: grant a fresh 5-minute countdown
         recordUserActivity();
