@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, type Profile } from '@/lib/supabase';
+import { flushUnsyncedRecords } from '@/lib/gameRecordsService';
 import {
   isAuthorizedEmail,
   getAllowedEmails,
@@ -110,14 +111,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (data) {
         setProfile(data as Profile);
+        void flushUnsyncedRecords(uid);
       } else if (emailHint && isAuthorizedEmail(emailHint)) {
         // Fallback profile if row hasn't been created yet
         setProfile(createFallbackProfile(uid, emailHint));
+        void flushUnsyncedRecords(uid);
       }
     } catch (err) {
       console.warn('[AuthContext] Network error loading profile:', err);
       if (emailHint && isAuthorizedEmail(emailHint)) {
         setProfile(createFallbackProfile(uid, emailHint));
+        void flushUnsyncedRecords(uid);
       }
     }
   }
@@ -134,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(dev.profile);
       setLoading(false);
       localStorage.setItem('haya_last_activity', String(Date.now()));
+      void flushUnsyncedRecords(dev.profile.id);
     }
   }
 
@@ -207,6 +212,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sub.subscription.unsubscribe();
     };
   }, [initialDev, signOut]);
+
+  // Flush queued unsynced game records when coming back online or when profile is ready
+  useEffect(() => {
+    if (!profile?.id) return;
+
+    void flushUnsyncedRecords(profile.id);
+
+    const handleOnline = () => {
+      void flushUnsyncedRecords(profile.id);
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [profile?.id]);
 
   // 5-Minute Inactivity Auto-Logout with Cross-Tab Sync and Match-Aware Pause
   useEffect(() => {

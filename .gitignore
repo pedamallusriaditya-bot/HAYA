@@ -55,3 +55,6 @@ coverage/
 *.bak
 *.tmp
 *~
+
+# Supabase local seed (never commit real emails)
+supabase/seed.sql

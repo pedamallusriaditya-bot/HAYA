@@ -261,6 +261,7 @@ export function recordUserActivity(
   try {
     storage.setItem(LAST_ACTIVITY_KEY, String(now));
   } catch {
+    // Ignore storage errors in restricted contexts
   }
 }
 export function setMatchActiveState(
@@ -278,6 +279,7 @@ export function setMatchActiveState(
       storage.setItem(LAST_ACTIVITY_KEY, String(now));
     }
   } catch {
+    // Ignore storage errors in restricted contexts
   }
 }
 

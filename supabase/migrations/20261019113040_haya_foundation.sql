@@ -62,8 +62,8 @@ CREATE POLICY "read_allowed_emails"
   USING (true);
 
 INSERT INTO allowed_emails (email) VALUES
-  ('pedamallusriaditya@gmail.com'),
-  ('pasulaharika61@gmail.com')
+  ('player1@example.com'),
+  ('player2@example.com')
 ON CONFLICT (email) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS profiles (

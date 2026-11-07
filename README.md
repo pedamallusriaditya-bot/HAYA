@@ -209,7 +209,7 @@ npm run build
 
 If setting up a fresh Supabase project or unpausing an existing instance, execute the SQL files in `supabase/migrations/` in chronological order in the Supabase SQL Editor:
 
-1. `20261019113040_haya_foundation.sql` — Initial allowlist, user profiles, `game_scores`, and security definer triggers.
+1. `20261019113040_haya_foundation.sql` — Initial allowlist, user profiles, `game_scores`, and security definer triggers (seeds placeholder accounts `player1@example.com` and `player2@example.com`).
 2. `20261023220000_match_reservations.sql` — Two-player color locking table.
 3. `20261028220000_avatar_data.sql` — Avatar JSON configuration column.
 4. `20261104210000_production_ready_haya.sql` — Game records, multiplayer invitations, and realtime publications.
@@ -218,6 +218,21 @@ If setting up a fresh Supabase project or unpausing an existing instance, execut
 7. `20261105230000_hardened_rls_and_security_perfection.sql` — Column-level update permissions on profiles (disallowing `is_admin` and `email` updates), append-only game records (dropping delete policies), trigger-enforced invitation metadata protection and expiration rejection, anon-revoked allowlist, and BEFORE INSERT/UPDATE allowlist validation on `auth.users`.
 8. `20261105233000_migrate_preferences_to_user_preferences.sql` — Migrates user preferences to the dedicated `user_preferences` table, drops the public `profiles.preferences` column for strict privacy, and re-grants column-level UPDATE on `profiles` for `(display_name, avatar_data, updated_at)`.
 9. `20261105234500_realtime_private_channels_and_rls.sql` — Establishes Supabase Realtime Authorization with RLS policies on `realtime.messages` allowing only allowlisted authenticated users to SELECT and INSERT on private channels (`haya-global-lobby`, `haya-invitations-db`, and `haya-match-<id>`).
+
+### 🔒 Seeding Authorized Player Accounts
+
+The migrations populate placeholder emails (`player1@example.com` and `player2@example.com`) to prevent committing real addresses to source control. To authorize your actual player accounts:
+
+1. Copy `supabase/seed.example.sql` to `supabase/seed.sql` (this file is ignored by git).
+2. Edit `supabase/seed.sql` to replace the placeholder emails with your two authorized addresses.
+3. Run the SQL script manually in the Supabase SQL Editor:
+   ```sql
+   INSERT INTO allowed_emails (email) VALUES
+     ('your-player1@example.com'),
+     ('your-player2@example.com')
+   ON CONFLICT (email) DO NOTHING;
+   ```
+4. Never commit real email addresses or `supabase/seed.sql` to version control. Ensure `VITE_ALLOWED_EMAILS` in your local `.env` matches these addresses.
 
 ---
 

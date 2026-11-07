@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { useAuth } from '@/auth/AuthContext';
-import { recordGameResult } from './gameRecordsService';
+import { recordGameResult, type RecordGameResultResponse } from './gameRecordsService';
 import type { GameRecord } from './supabase';
 
 export type RecordGameParams = {
@@ -33,7 +33,7 @@ export function useGameRecorder(gameId: string, initialDifficulty: string | null
   }, []);
 
   const recordResult = useCallback(
-    async (params: RecordGameParams) => {
+    async (params: RecordGameParams): Promise<RecordGameResultResponse | undefined> => {
       if (!user) return;
       // Prevent duplicate submissions for the same game session unless an explicit custom matchId was given
       if (recordedRef.current && !params.matchId) {

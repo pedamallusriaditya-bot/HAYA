@@ -1,7 +1,5 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-
-// Mock Supabase module to prevent network calls in test environment
 if (mock && typeof mock.module === 'function') {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (mock as any).module('./supabase.ts', {
@@ -23,21 +21,14 @@ if (mock && typeof mock.module === 'function') {
     },
   });
 }
-
 const { normalizeDifficulty } = await import('./useHighScore.ts');
-
 test('useHighScore: normalizeDifficulty converts nullish and empty values to default', () => {
-  // Null and undefined must always normalize to 'default'
   assert.equal(normalizeDifficulty(null), 'default');
   assert.equal(normalizeDifficulty(undefined), 'default');
   assert.equal(normalizeDifficulty(), 'default');
-
-  // Whitespace and empty strings must normalize to 'default'
   assert.equal(normalizeDifficulty(''), 'default');
   assert.equal(normalizeDifficulty('   '), 'default');
   assert.equal(normalizeDifficulty('\t\n'), 'default');
-
-  // Non-empty difficulty values must be preserved and trimmed
   assert.equal(normalizeDifficulty('easy'), 'easy');
   assert.equal(normalizeDifficulty('medium'), 'medium');
   assert.equal(normalizeDifficulty('hard'), 'hard');
