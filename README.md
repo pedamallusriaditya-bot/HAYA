@@ -218,6 +218,7 @@ If setting up a fresh Supabase project or unpausing an existing instance, execut
 7. `20261105230000_hardened_rls_and_security_perfection.sql` — Column-level update permissions on profiles (disallowing `is_admin` and `email` updates), append-only game records (dropping delete policies), trigger-enforced invitation metadata protection and expiration rejection, anon-revoked allowlist, and BEFORE INSERT/UPDATE allowlist validation on `auth.users`.
 8. `20261105233000_migrate_preferences_to_user_preferences.sql` — Migrates user preferences to the dedicated `user_preferences` table, drops the public `profiles.preferences` column for strict privacy, and re-grants column-level UPDATE on `profiles` for `(display_name, avatar_data, updated_at)`.
 9. `20261105234500_realtime_private_channels_and_rls.sql` — Establishes Supabase Realtime Authorization with RLS policies on `realtime.messages` allowing only allowlisted authenticated users to SELECT and INSERT on private channels (`haya-global-lobby`, `haya-invitations-db`, and `haya-match-<id>`).
+10. `20261106000000_profile_insert_lockdown.sql` — Revokes INSERT on public.profiles from authenticated and anon roles (profiles are created exclusively via the SECURITY DEFINER signup trigger) and ensures RLS is explicitly enabled on realtime.messages.
 
 ### 🔒 Seeding Authorized Player Accounts
 
