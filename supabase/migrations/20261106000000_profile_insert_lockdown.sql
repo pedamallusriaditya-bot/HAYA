@@ -1,12 +1,4 @@
-/*
-  # Lock down profile inserts and make realtime RLS explicit
-  - Profiles are created only by the SECURITY DEFINER signup trigger.
-  - Enabling RLS on realtime.messages is idempotent and guarantees the
-    private-channel policies actually apply.
-*/
-
 REVOKE INSERT ON public.profiles FROM authenticated, anon;
-
 DO $$
 BEGIN
   IF EXISTS (
