@@ -27,12 +27,26 @@ export type UserGameStats = {
   recentMatches: GameRecord[];
 };
 
+export type GameRecordInput = Omit<GameRecord, 'match_id'> & {
+  match_id?: string | null;
+};
+
 export type RecordGameResultResponse = {
   success: boolean;
   synced: boolean;
   record: GameRecord;
   error?: string;
 };
+
+/**
+ * Generates a stable unique match ID (UUID).
+ */
+export function generateMatchId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `match_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+}
 
 /**
  * Safely parses a JSON string or returns null.
@@ -113,19 +127,27 @@ export function saveUnsyncedRecords(userId: string, records: GameRecord[]): void
 
 /**
  * Adds a game record to the persistent unsynced queue, avoiding duplicates.
+ * Ensures the record carries a stable match_id idempotency key.
  */
-export function addToUnsyncedQueue(userId: string, record: GameRecord): void {
+export function addToUnsyncedQueue(userId: string, record: GameRecord | GameRecordInput): void {
+  const normalized: GameRecord = {
+    ...record,
+    match_id: record.match_id || generateMatchId(),
+    score_type: record.score_type || 'score',
+    opponent_type: record.opponent_type || 'none',
+    created_at: record.created_at || new Date().toISOString(),
+  };
   const current = getUnsyncedRecords(userId);
   const filtered = current.filter((r) => {
-    if (record.match_id && r.match_id) {
-      return r.match_id !== record.match_id;
+    if (normalized.match_id && r.match_id) {
+      return r.match_id !== normalized.match_id;
     }
-    if (record.id && r.id) {
-      return r.id !== record.id;
+    if (normalized.id && r.id) {
+      return r.id !== normalized.id;
     }
     return true;
   });
-  saveUnsyncedRecords(userId, [record, ...filtered]);
+  saveUnsyncedRecords(userId, [normalized, ...filtered]);
 }
 
 /**
@@ -223,22 +245,24 @@ export function _resetSubmittedMatches(): void {
  * Persists to Supabase and keeps local cache synchronized.
  */
 export async function recordGameResult(
-  record: GameRecord
+  record: GameRecordInput
 ): Promise<RecordGameResultResponse> {
-  const dedupeKey = record.match_id ? `${record.user_id}_${record.match_id}` : null;
-
-  // Prevent duplicate submissions in same session IF already successfully submitted
-  if (dedupeKey && submittedMatches.has(dedupeKey)) {
-    console.log('[gameRecordsService] Match already recorded, skipping dedupe:', dedupeKey);
-    return { success: true, synced: true, record };
-  }
+  const matchId = record.match_id || generateMatchId();
+  const dedupeKey = `${record.user_id}_${matchId}`;
 
   const normalizedRecord: GameRecord = {
     ...record,
+    match_id: matchId,
     score_type: record.score_type || 'score',
     opponent_type: record.opponent_type || 'none',
     created_at: record.created_at || new Date().toISOString(),
   };
+
+  // Prevent duplicate submissions in same session IF already successfully submitted
+  if (submittedMatches.has(dedupeKey)) {
+    console.log('[gameRecordsService] Match already recorded, skipping dedupe:', dedupeKey);
+    return { success: true, synced: true, record: normalizedRecord };
+  }
 
   // 1. Instantly update local cache for zero-latency UI updates
   const local = getLocalRecords(record.user_id);
@@ -268,7 +292,7 @@ export async function recordGameResult(
           opponent_name: normalizedRecord.opponent_name || null,
           bot_difficulty: normalizedRecord.bot_difficulty || null,
           duration_seconds: normalizedRecord.duration_seconds || null,
-          match_id: normalizedRecord.match_id || null,
+          match_id: normalizedRecord.match_id,
           created_at: normalizedRecord.created_at,
         },
       ])
@@ -278,32 +302,24 @@ export async function recordGameResult(
     if (error) {
       if (isUniqueViolation(error)) {
         // Unique violation means this match already exists in Supabase: treat as success!
-        if (dedupeKey) {
-          submittedMatches.add(dedupeKey);
-        }
-        if (record.match_id) {
-          removeFromUnsyncedQueue(record.user_id, record.match_id);
-        }
+        submittedMatches.add(dedupeKey);
+        removeFromUnsyncedQueue(normalizedRecord.user_id, normalizedRecord.match_id);
         return { success: true, synced: true, record: normalizedRecord };
       }
 
       console.warn('[gameRecordsService] Supabase insert warning:', error.message);
-      addToUnsyncedQueue(record.user_id, normalizedRecord);
+      addToUnsyncedQueue(normalizedRecord.user_id, normalizedRecord);
       return { success: true, synced: false, record: normalizedRecord, error: error.message };
     }
 
-    if (dedupeKey) {
-      submittedMatches.add(dedupeKey);
-    }
-    if (record.match_id) {
-      removeFromUnsyncedQueue(record.user_id, record.match_id);
-    }
+    submittedMatches.add(dedupeKey);
+    removeFromUnsyncedQueue(normalizedRecord.user_id, normalizedRecord.match_id);
     const saved = (data as GameRecord) || normalizedRecord;
     return { success: true, synced: true, record: saved };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Database error';
     console.warn('[gameRecordsService] Remote sync fallback to local cache:', msg);
-    addToUnsyncedQueue(record.user_id, normalizedRecord);
+    addToUnsyncedQueue(normalizedRecord.user_id, normalizedRecord);
     return { success: true, synced: false, record: normalizedRecord, error: msg };
   }
 }
@@ -377,24 +393,32 @@ export async function flushUnsyncedRecords(
   const errors: string[] = [];
 
   for (const r of queue) {
-    const dedupeKey = r.match_id ? `${r.user_id}_${r.match_id}` : null;
+    const matchId = r.match_id || generateMatchId();
+    const recordToSync: GameRecord = {
+      ...r,
+      match_id: matchId,
+      score_type: r.score_type || 'score',
+      opponent_type: r.opponent_type || 'none',
+      created_at: r.created_at || new Date().toISOString(),
+    };
+    const dedupeKey = `${recordToSync.user_id}_${recordToSync.match_id}`;
     try {
       const { data, error } = await supabase
         .from('game_records')
         .insert([
           {
-            user_id: r.user_id,
-            game: r.game,
-            mode: r.mode,
-            result: r.result,
-            score: r.score,
-            score_type: r.score_type || 'score',
-            opponent_type: r.opponent_type || 'none',
-            opponent_name: r.opponent_name || null,
-            bot_difficulty: r.bot_difficulty || null,
-            duration_seconds: r.duration_seconds || null,
-            match_id: r.match_id || null,
-            created_at: r.created_at,
+            user_id: recordToSync.user_id,
+            game: recordToSync.game,
+            mode: recordToSync.mode,
+            result: recordToSync.result,
+            score: recordToSync.score,
+            score_type: recordToSync.score_type,
+            opponent_type: recordToSync.opponent_type,
+            opponent_name: recordToSync.opponent_name || null,
+            bot_difficulty: recordToSync.bot_difficulty || null,
+            duration_seconds: recordToSync.duration_seconds || null,
+            match_id: recordToSync.match_id,
+            created_at: recordToSync.created_at,
           },
         ])
         .select()
@@ -404,29 +428,25 @@ export async function flushUnsyncedRecords(
         if (isUniqueViolation(error)) {
           // Unique violation: record already exists in database, treat as success!
           flushed++;
-          if (dedupeKey) {
-            submittedMatches.add(dedupeKey);
-          }
+          submittedMatches.add(dedupeKey);
         } else {
-          remainingQueue.push(r);
+          remainingQueue.push(recordToSync);
           errors.push(error.message);
         }
       } else {
         flushed++;
-        if (dedupeKey) {
-          submittedMatches.add(dedupeKey);
-        }
+        submittedMatches.add(dedupeKey);
         if (data?.id) {
           const local = getLocalRecords(userId);
           const updatedLocal = local.map((loc) =>
-            loc.match_id && loc.match_id === r.match_id ? { ...loc, id: data.id } : loc
+            loc.match_id === recordToSync.match_id ? { ...loc, id: data.id } : loc
           );
           saveLocalRecords(userId, updatedLocal);
         }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Network error';
-      remainingQueue.push(r);
+      remainingQueue.push(recordToSync);
       errors.push(msg);
     }
   }

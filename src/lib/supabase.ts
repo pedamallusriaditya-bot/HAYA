@@ -62,7 +62,7 @@ export type GameRecord = {
   opponent_name?: string | null;
   bot_difficulty?: string | null;
   duration_seconds?: number | null;
-  match_id?: string | null;
+  match_id: string;
   created_at?: string;
 };
 

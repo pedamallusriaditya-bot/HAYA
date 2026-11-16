@@ -1,7 +1,35 @@
 import { useState } from 'react';
 import { Gamepad2, Lock, Mail, Eye, EyeOff, Sparkles, ArrowRight, AlertCircle, Loader2, User } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
-import { getAllowedEmails } from '@/auth/authUtils';
+
+const DEV_PLAYERS = import.meta.env.DEV
+  ? (() => {
+      const devEmails = ((import.meta.env as Record<string, string | undefined>).VITE_ALLOWED_EMAILS || '')
+        .split(',')
+        .map((e: string) => e.trim().toLowerCase())
+        .filter(Boolean);
+      return [
+        {
+          name: 'Aditya',
+          email: devEmails[0] || '',
+          tag: 'Player 1',
+          emoji: '🎮',
+          accent: 'from-sky-500 to-indigo-600',
+          border: 'border-sky-500/50 hover:border-sky-400',
+          activeGlow: 'ring-2 ring-sky-400 bg-sky-500/10 shadow-lg shadow-sky-500/20',
+        },
+        {
+          name: 'Harika',
+          email: devEmails[1] || '',
+          tag: 'Player 2',
+          emoji: '✨',
+          accent: 'from-fuchsia-500 to-pink-600',
+          border: 'border-fuchsia-500/50 hover:border-fuchsia-400',
+          activeGlow: 'ring-2 ring-fuchsia-400 bg-fuchsia-500/10 shadow-lg shadow-fuchsia-500/20',
+        },
+      ];
+    })()
+  : [];
 
 export default function Login() {
   const { signIn, session, devSignIn, logoutNotice, clearLogoutNotice } = useAuth();
@@ -11,39 +39,15 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const allowed = getAllowedEmails();
-  const player1Email = allowed[0] || '';
-  const player2Email = allowed[1] || '';
-
-  const PLAYERS = [
-    {
-      name: 'Aditya',
-      email: player1Email,
-      tag: 'Player 1',
-      emoji: '🎮',
-      accent: 'from-sky-500 to-indigo-600',
-      border: 'border-sky-500/50 hover:border-sky-400',
-      activeGlow: 'ring-2 ring-sky-400 bg-sky-500/10 shadow-lg shadow-sky-500/20',
-    },
-    {
-      name: 'Harika',
-      email: player2Email,
-      tag: 'Player 2',
-      emoji: '✨',
-      accent: 'from-fuchsia-500 to-pink-600',
-      border: 'border-fuchsia-500/50 hover:border-fuchsia-400',
-      activeGlow: 'ring-2 ring-fuchsia-400 bg-fuchsia-500/10 shadow-lg shadow-fuchsia-500/20',
-    },
-  ];
-
   if (session) return null;
 
-  function selectPlayer(playerEmail: string) {
+  function selectDevPlayer(playerEmail: string) {
+    if (!import.meta.env.DEV) return;
     setEmail(playerEmail);
     setError(null);
     clearLogoutNotice();
-    if (import.meta.env.DEV && devSignIn) {
-      const p = PLAYERS.find((x) => x.email === playerEmail);
+    if (devSignIn) {
+      const p = DEV_PLAYERS.find((x) => x.email === playerEmail);
       if (p) {
         devSignIn(p.email, p.name);
       }
@@ -57,7 +61,7 @@ export default function Login() {
 
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !password) {
-      setError('Please choose your player and enter your password.');
+      setError('Please enter your email and password.');
       return;
     }
 
@@ -70,7 +74,9 @@ export default function Login() {
     }
   }
 
-  const selectedPlayer = PLAYERS.find((p) => p.email.toLowerCase() === email.trim().toLowerCase());
+  const selectedDevPlayer = import.meta.env.DEV
+    ? DEV_PLAYERS.find((p) => p.email && p.email.toLowerCase() === email.trim().toLowerCase())
+    : undefined;
 
   return (
     <div className="min-h-[100dvh] relative overflow-x-hidden bg-slate-950 flex items-center justify-center p-3 xs:p-4 sm:p-6 py-6 xs:py-8 safe-top safe-bottom">
@@ -130,38 +136,40 @@ export default function Login() {
             </div>
           )}
 
-          {/* Quick Player Selection */}
-          <div className="mb-6">
-            <label className="text-xs uppercase font-bold tracking-wider text-slate-400 block mb-3 text-center">
-              Who is playing?
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              {PLAYERS.map((p) => {
-                const isSelected = selectedPlayer?.email === p.email;
-                return (
-                  <button
-                    key={p.name}
-                    type="button"
-                    onClick={() => selectPlayer(p.email)}
-                    className={`relative p-3.5 rounded-2xl border transition-all duration-200 text-left flex flex-col items-center gap-2 ${
-                      isSelected
-                        ? p.activeGlow
-                        : 'bg-slate-950/40 border-slate-800 hover:bg-slate-800/50 hover:border-slate-700'
-                    }`}
-                  >
-                    <span className="text-3xl transform transition-transform hover:scale-110">{p.emoji}</span>
-                    <div className="text-center">
-                      <span className="block font-bold text-slate-100 text-sm sm:text-base">{p.name}</span>
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{p.tag}</span>
-                    </div>
-                  </button>
-                );
-              })}
+          {/* Quick Player Selection (Dev Only) */}
+          {import.meta.env.DEV && DEV_PLAYERS.length > 0 && DEV_PLAYERS.some((p) => p.email) && (
+            <div className="mb-6">
+              <label className="text-xs uppercase font-bold tracking-wider text-slate-400 block mb-3 text-center">
+                Who is playing? (Dev)
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                {DEV_PLAYERS.map((p) => {
+                  const isSelected = selectedDevPlayer?.email === p.email;
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => selectDevPlayer(p.email)}
+                      className={`relative p-3.5 rounded-2xl border transition-all duration-200 text-left flex flex-col items-center gap-2 ${
+                        isSelected
+                          ? p.activeGlow
+                          : 'bg-slate-950/40 border-slate-800 hover:bg-slate-800/50 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className="text-3xl transform transition-transform hover:scale-110">{p.emoji}</span>
+                      <div className="text-center">
+                        <span className="block font-bold text-slate-100 text-sm sm:text-base">{p.name}</span>
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{p.tag}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           <form onSubmit={onSubmit} className="space-y-4">
-            {/* Email input (hidden or editable) */}
+            {/* Email input */}
             <div>
               <label className="label text-xs uppercase tracking-wider font-semibold text-slate-400" htmlFor="email">
                 Account Email
@@ -175,7 +183,7 @@ export default function Login() {
                   className="input pl-10 text-sm"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Select a player above or enter email"
+                  placeholder="Enter your email"
                   disabled={busy}
                 />
               </div>
@@ -251,16 +259,16 @@ export default function Login() {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => devSignIn?.(player2Email, 'Harika')}
-                    disabled={!player2Email}
+                    onClick={() => devSignIn?.(DEV_PLAYERS[1]?.email || '', 'Harika')}
+                    disabled={!DEV_PLAYERS[1]?.email}
                     className="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold bg-fuchsia-600/30 border border-fuchsia-500/50 text-fuchsia-300 hover:bg-fuchsia-600/50 transition disabled:opacity-40"
                   >
                     ✨ Harika (P2)
                   </button>
                   <button
                     type="button"
-                    onClick={() => devSignIn?.(player1Email, 'Aditya')}
-                    disabled={!player1Email}
+                    onClick={() => devSignIn?.(DEV_PLAYERS[0]?.email || '', 'Aditya')}
+                    disabled={!DEV_PLAYERS[0]?.email}
                     className="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold bg-sky-600/30 border border-sky-500/50 text-sky-300 hover:bg-sky-600/50 transition disabled:opacity-40"
                   >
                     🎮 Aditya (P1)

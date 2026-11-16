@@ -41,27 +41,39 @@ if (mock && typeof mock.module === 'function') {
                   };
                 }
 
-                // Check unique constraint on (user_id, match_id)
+                // Enforce NOT NULL and unique constraint on (user_id, match_id)
                 for (const r of records) {
-                  if (r.match_id) {
-                    const exists = remoteDb.some(
-                      (row) => row.user_id === r.user_id && row.match_id === r.match_id
-                    );
-                    if (exists) {
-                      return {
-                        select: () => ({
-                          maybeSingle: () =>
-                            Promise.resolve({
-                              data: null,
-                              error: {
-                                code: '23505',
-                                message:
-                                  'duplicate key value violates unique constraint "game_records_user_match_unique"',
-                              },
-                            }),
-                        }),
-                      };
-                    }
+                  if (!r.match_id) {
+                    return {
+                      select: () => ({
+                        maybeSingle: () =>
+                          Promise.resolve({
+                            data: null,
+                            error: {
+                              code: '23502',
+                              message: 'null value in column "match_id" of relation "game_records" violates not-null constraint',
+                            },
+                          }),
+                      }),
+                    };
+                  }
+                  const exists = remoteDb.some(
+                    (row) => row.user_id === r.user_id && row.match_id === r.match_id
+                  );
+                  if (exists) {
+                    return {
+                      select: () => ({
+                        maybeSingle: () =>
+                          Promise.resolve({
+                            data: null,
+                            error: {
+                              code: '23505',
+                              message:
+                                'duplicate key value violates unique constraint "game_records_user_match_unique"',
+                            },
+                          }),
+                      }),
+                    };
                   }
                 }
 
@@ -331,6 +343,108 @@ test('Game Records Service: flushUnsyncedRecords retries queued records and clea
   assert.equal(flushDupResult.flushed, 1, 'Unique violation must count as flushed');
   assert.equal(flushDupResult.remaining, 0);
   assert.equal(getUnsyncedRecords(TEST_UID).length, 0, 'Unique violation must clear the record from queue');
+});
+
+test('Game Records Service: Record without a supplied match_id gets one generated', async () => {
+  storage.clear();
+  remoteDb.length = 0;
+  _resetSubmittedMatches();
+  shouldFailInsert = false;
+
+  // 1. Submit record without match_id
+  const result = await recordGameResult({
+    user_id: TEST_UID,
+    game: 'sudoku',
+    mode: 'single',
+    result: 'win',
+    score: 100,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.synced, true);
+  assert.ok(result.record.match_id, 'match_id must be generated');
+  assert.equal(typeof result.record.match_id, 'string');
+  assert.ok(result.record.match_id.length > 0);
+
+  // Verify local cache has the generated match_id
+  const local = getLocalRecords(TEST_UID);
+  assert.equal(local.length, 1);
+  assert.equal(local[0].match_id, result.record.match_id);
+
+  // Verify remote DB has the generated match_id
+  assert.equal(remoteDb.length, 1);
+  assert.equal(remoteDb[0].match_id, result.record.match_id);
+
+  // 2. Offline case: record without match_id fails insert and gets queued with generated match_id
+  shouldFailInsert = true;
+  failInsertError = { message: 'Network offline', code: '500' };
+
+  const offlineResult = await recordGameResult({
+    user_id: TEST_UID,
+    game: 'minesweeper',
+    mode: 'single',
+    result: 'loss',
+    score: 0,
+  });
+
+  assert.equal(offlineResult.success, true);
+  assert.equal(offlineResult.synced, false);
+  assert.ok(offlineResult.record.match_id, 'Offline record must still receive a generated match_id');
+
+  // Verify persistent unsynced queue has the generated match_id
+  const unsynced = getUnsyncedRecords(TEST_UID);
+  assert.equal(unsynced.length, 1);
+  assert.equal(unsynced[0].match_id, offlineResult.record.match_id);
+});
+
+test('Game Records Service: Retrying the same queued record twice results in one row via unique-violation path', async () => {
+  storage.clear();
+  remoteDb.length = 0;
+  _resetSubmittedMatches();
+  shouldFailInsert = false;
+
+  const queuedRecord = {
+    user_id: TEST_UID,
+    game: 'chess',
+    mode: 'bot' as const,
+    result: 'win' as const,
+    score: 1,
+    // match_id omitted to verify that addToUnsyncedQueue generates one or flush uses generated one
+  };
+
+  addToUnsyncedQueue(TEST_UID, queuedRecord);
+  const queue = getUnsyncedRecords(TEST_UID);
+  assert.equal(queue.length, 1);
+  const generatedMatchId = queue[0].match_id;
+  assert.ok(generatedMatchId, 'Queued record must have a generated match_id');
+
+  // First flush: succeeds and inserts row into remoteDb
+  const firstFlush = await flushUnsyncedRecords(TEST_UID);
+  assert.equal(firstFlush.flushed, 1);
+  assert.equal(firstFlush.remaining, 0);
+  assert.equal(getUnsyncedRecords(TEST_UID).length, 0);
+
+  const rowsAfterFirst = remoteDb.filter(
+    (r) => r.user_id === TEST_UID && r.match_id === generatedMatchId
+  );
+  assert.equal(rowsAfterFirst.length, 1, 'First flush must insert exactly 1 row');
+
+  // Simulate network dropped client acknowledgement so client re-queues and retries the same record
+  _resetSubmittedMatches(); // clear session memory to force DB insert call
+  addToUnsyncedQueue(TEST_UID, queue[0]);
+  assert.equal(getUnsyncedRecords(TEST_UID).length, 1);
+
+  // Second flush: DB returns unique-violation (23505), flushUnsyncedRecords treats as success and clears queue
+  const secondFlush = await flushUnsyncedRecords(TEST_UID);
+  assert.equal(secondFlush.flushed, 1, 'Retried flush on unique violation must count as flushed (success)');
+  assert.equal(secondFlush.remaining, 0, 'Queue must be cleared on unique violation');
+  assert.equal(getUnsyncedRecords(TEST_UID).length, 0, 'Unsynced queue must have 0 remaining items');
+
+  // Verify remote DB still has EXACTLY ONE row (no duplicates)
+  const rowsAfterSecond = remoteDb.filter(
+    (r) => r.user_id === TEST_UID && r.match_id === generatedMatchId
+  );
+  assert.equal(rowsAfterSecond.length, 1, 'Remote DB must contain exactly 1 row after retrying identical queued record');
 });
 
 test('Game Records Service: Resilient JSON parsing and cache size capping', () => {

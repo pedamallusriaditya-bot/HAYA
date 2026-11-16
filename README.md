@@ -52,10 +52,11 @@ HAYA Games features **11 distinct, fully implemented playable machines**, split 
 ## ✨ Key Platform Features
 
 ### 🔒 Private Two-Player Authentication & Security
-- **Strict Email Allowlist & Password Authentication:** Access is restricted to two authorized accounts configured via `VITE_ALLOWED_EMAILS`. Login requires email and password authentication. Unauthorized accounts are blocked at the client and database level via a `BEFORE INSERT OR UPDATE OF email` trigger on `auth.users`. Anon access to `allowed_emails` is revoked.
+- **Database-Enforced Email Allowlist & Password Authentication:** Access is restricted to the two authorized accounts configured in the Supabase database (`allowed_emails` table). The client allowlist has been removed so player emails are never bundled into production client JavaScript. The database trigger on `auth.users` (`BEFORE INSERT OR UPDATE OF email`) serves as the single source of truth, and unallowlisted sign-ins or sessions without a `profiles` row are blocked. Anon access to `allowed_emails` is revoked.
 - **Column-Level Permissions & Preferences Isolation:** Authenticated users can only update client-written columns on `profiles` (`display_name`, `avatar_data`, `updated_at`); personal sound, music, and theme preferences reside in a dedicated `user_preferences` table with strict owner-only RLS; privilege elevation (`is_admin`) and email tampering are blocked at the PostgreSQL grant level.
 - **Private Realtime Channels & Zero-Trust Presence:** Realtime channels (`haya-global-lobby`, `haya-invitations-db`, `haya-match-<id>`) use `{ config: { private: true } }` authorized through RLS policies on `realtime.messages` (requiring verified JWT email in `allowed_emails` for SELECT and INSERT); presence tracking strips personal email addresses to prevent broadcast leakage.
-- **Append-Only Match Records:** Game history cannot be modified or deleted by players once recorded.
+- **Append-Only Match Records & Deduplication:** Game history cannot be modified or deleted by players once recorded. Every match record carries a non-null `match_id` idempotency key with a `UNIQUE (user_id, match_id)` constraint, preventing duplicate rows during retried sync flushes.
+- **Client-Submitted Game Records (Accepted Risk):** Game records, scores, and match results are client-submitted upon completion, meaning scores and results could theoretically be forged by either player. This is an explicit, accepted risk for this two-person private arcade between trusted players.
 - **Trigger-Enforced Invitation Integrity:** Invitation metadata is immutable; only `status` can be transitioned, and expired invitations cannot be accepted.
 - **5-Minute Inactivity Auto-Logout:** Pauses during active gameplay matches, resumes with a fresh 5 minutes on match completion, with cross-tab synchronized session expiration.
 
@@ -155,12 +156,12 @@ Copy `.env.example` to `.env` in the project root:
 ```bash
 cp .env.example .env
 ```
-And set your Supabase credentials and allowed accounts:
+And set your Supabase credentials:
 ```env
 VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key-here
-VITE_ALLOWED_EMAILS=player1@example.com,player2@example.com
 ```
+*(Optional for local development only: you may set `VITE_ALLOWED_EMAILS=player1@example.com,player2@example.com` in `.env.local` to enable local dev login buttons; this is stripped completely from production builds.)*
 
 ### 3. Development Server
 Start the local Vite development server:
@@ -219,6 +220,7 @@ If setting up a fresh Supabase project or unpausing an existing instance, execut
 8. `20261105233000_migrate_preferences_to_user_preferences.sql` — Migrates user preferences to the dedicated `user_preferences` table, drops the public `profiles.preferences` column for strict privacy, and re-grants column-level UPDATE on `profiles` for `(display_name, avatar_data, updated_at)`.
 9. `20261105234500_realtime_private_channels_and_rls.sql` — Establishes Supabase Realtime Authorization with RLS policies on `realtime.messages` allowing only allowlisted authenticated users to SELECT and INSERT on private channels (`haya-global-lobby`, `haya-invitations-db`, and `haya-match-<id>`).
 10. `20261106000000_profile_insert_lockdown.sql` — Revokes INSERT on public.profiles from authenticated and anon roles (profiles are created exclusively via the SECURITY DEFINER signup trigger) and ensures RLS is explicitly enabled on realtime.messages.
+11. `20261106010000_game_records_match_id_not_null.sql` — Backfills NULL match_id values in public.game_records with `gen_random_uuid()::text` and sets match_id to `NOT NULL` to enforce deterministic deduplication via `UNIQUE (user_id, match_id)` across retried flushes.
 
 ### 🔒 Seeding Authorized Player Accounts
 
@@ -233,10 +235,13 @@ The migrations populate placeholder emails (`player1@example.com` and `player2@e
      ('your-player2@example.com')
    ON CONFLICT (email) DO NOTHING;
    ```
-4. Never commit real email addresses or `supabase/seed.sql` to version control. Ensure `VITE_ALLOWED_EMAILS` in your local `.env` matches these addresses.
+4. Never commit real email addresses or `supabase/seed.sql` to version control.
 
 ---
 
 ## 👥 Authorized Players
 
-HAYA is designed for two authorized accounts configured securely through the `VITE_ALLOWED_EMAILS` environment variable. User accounts maintain isolated avatars, statistics, match records, and personal preferences while sharing real-time multiplayer invitation and matchmaking capabilities.
+HAYA is designed for two authorized accounts enforced at the database level (`public.allowed_emails`). The client allowlist has been removed to prevent leaking player emails into client bundles; the database is the authoritative source of truth. User accounts maintain isolated avatars, statistics, match records, and personal preferences while sharing real-time multiplayer invitation and matchmaking capabilities.
+
+> [!WARNING]
+> **Security Notice:** Any email addresses that were previously included in deployed production client bundles (via `VITE_ALLOWED_EMAILS`) should be considered public, as Vite inlines environment variables prefixed with `VITE_` into client-side JavaScript assets. If those email addresses were intended to remain confidential, rotate them in your database accordingly.

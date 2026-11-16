@@ -3,8 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase, type Profile } from '@/lib/supabase';
 import { flushUnsyncedRecords } from '@/lib/gameRecordsService';
 import {
-  isAuthorizedEmail,
-  getAllowedEmails,
+  translateAuthError,
   isMatchActive,
   evaluateInactivity,
   recordUserActivity,
@@ -22,55 +21,97 @@ export { useAuth, type AuthState };
 const DEV_ADITYA_UUID = '00000000-0000-0000-0000-000000000001';
 const DEV_HARIKA_UUID = '00000000-0000-0000-0000-000000000002';
 
-function getInitialDevSession() {
-  if (typeof window === 'undefined' || !import.meta.env.DEV) return null;
-  try {
-    const raw = localStorage.getItem('haya_dev_auth');
-    if (!raw) return null;
-    const { email, name } = JSON.parse(raw);
-    if (!email || !isAuthorizedEmail(email)) return null;
+type DevSessionResult = { session: Session; profile: Profile } | null;
 
-    const allowed = getAllowedEmails();
-    const isHarika =
-      (allowed.length > 1 && email.toLowerCase() === allowed[1].toLowerCase()) ||
-      email.toLowerCase().includes('harika');
-    const userId = isHarika ? DEV_HARIKA_UUID : DEV_ADITYA_UUID;
+let getInitialDevSession: () => DevSessionResult = () => null;
+let devSignInHandler: (
+  email: string,
+  name: string,
+  setNotice: (msg: string) => void,
+  setSession: (s: Session | null) => void,
+  setProfile: (p: Profile | null) => void,
+  setLoading: (l: boolean) => void
+) => void = () => {};
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mockUser: any = {
-      id: userId,
-      email,
-      user_metadata: { display_name: name },
-      app_metadata: {},
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mockSession: any = {
-      access_token: 'mock-dev-token',
-      token_type: 'bearer',
-      user: mockUser,
-      expires_in: 360000,
-      refresh_token: 'mock-dev-refresh',
-    };
-    const mockProfile: Profile = {
-      id: userId,
-      email,
-      display_name: name,
-      is_admin: false,
-      preferences: { sound: true, music: true },
-    };
-    return { session: mockSession, profile: mockProfile };
-  } catch {
-    return null;
-  }
+if (import.meta.env.DEV) {
+  getInitialDevSession = () => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem('haya_dev_auth');
+      if (!raw) return null;
+      const { email, name } = JSON.parse(raw);
+      if (!email) return null;
+
+      const devAllowed = ((import.meta.env as Record<string, string | undefined>).VITE_ALLOWED_EMAILS || '')
+        .split(',')
+        .map((e: string) => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (devAllowed.length > 0 && !devAllowed.includes(email.toLowerCase())) {
+        return null;
+      }
+
+      const isHarika =
+        (devAllowed.length > 1 && email.toLowerCase() === devAllowed[1].toLowerCase()) ||
+        email.toLowerCase().includes('harika') ||
+        (typeof name === 'string' && name.toLowerCase().includes('harika'));
+      const userId = isHarika ? DEV_HARIKA_UUID : DEV_ADITYA_UUID;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mockUser: any = {
+        id: userId,
+        email,
+        user_metadata: { display_name: name },
+        app_metadata: {},
+        aud: 'authenticated',
+        created_at: new Date().toISOString(),
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mockSession: any = {
+        access_token: 'mock-dev-token',
+        token_type: 'bearer',
+        user: mockUser,
+        expires_in: 360000,
+        refresh_token: 'mock-dev-refresh',
+      };
+      const mockProfile: Profile = {
+        id: userId,
+        email,
+        display_name: name,
+        is_admin: false,
+        preferences: { sound: true, music: true },
+      };
+      return { session: mockSession, profile: mockProfile };
+    } catch {
+      return null;
+    }
+  };
+
+  devSignInHandler = (email, name, setNotice, setSession, setProfile, setLoading) => {
+    const devAllowed = ((import.meta.env as Record<string, string | undefined>).VITE_ALLOWED_EMAILS || '')
+      .split(',')
+      .map((e: string) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (devAllowed.length > 0 && !devAllowed.includes(email.toLowerCase())) {
+      setNotice('This email is not authorized to use HAYA Games.');
+      return;
+    }
+    localStorage.setItem('haya_dev_auth', JSON.stringify({ email, name }));
+    const dev = getInitialDevSession();
+    if (dev) {
+      setSession(dev.session);
+      setProfile(dev.profile);
+      setLoading(false);
+      localStorage.setItem('haya_last_activity', String(Date.now()));
+      void flushUnsyncedRecords(dev.profile.id);
+    }
+  };
 }
 
 // Clear any leftover in-match state on module initialization
 clearMatchActiveState();
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const initialDev = getInitialDevSession();
+  const initialDev = import.meta.env.DEV ? getInitialDevSession() : null;
   const [session, setSession] = useState<Session | null>(() => initialDev?.session ?? null);
   const [profile, setProfile] = useState<Profile | null>(() => initialDev?.profile ?? null);
   const [loading, setLoading] = useState(() => !initialDev);
@@ -103,8 +144,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         console.warn('[AuthContext] Profile load warning:', error.message);
-        if (emailHint && isAuthorizedEmail(emailHint)) {
+        if (import.meta.env.DEV && emailHint) {
           setProfile(createFallbackProfile(uid, emailHint));
+        } else {
+          setProfile(null);
         }
         return;
       }
@@ -112,35 +155,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data) {
         setProfile(data as Profile);
         void flushUnsyncedRecords(uid);
-      } else if (emailHint && isAuthorizedEmail(emailHint)) {
-        // Fallback profile if row hasn't been created yet
+      } else if (import.meta.env.DEV && emailHint) {
+        // Fallback profile only in local dev environment
         setProfile(createFallbackProfile(uid, emailHint));
         void flushUnsyncedRecords(uid);
+      } else {
+        // In production: no profiles row means unauthorized account
+        setProfile(null);
       }
     } catch (err) {
       console.warn('[AuthContext] Network error loading profile:', err);
-      if (emailHint && isAuthorizedEmail(emailHint)) {
+      if (import.meta.env.DEV && emailHint) {
         setProfile(createFallbackProfile(uid, emailHint));
         void flushUnsyncedRecords(uid);
+      } else {
+        setProfile(null);
       }
     }
   }
 
-  function devSignIn(email: string, name: string) {
-    if (!isAuthorizedEmail(email)) {
-      setLogoutNotice('This email is not authorized to use HAYA Games.');
-      return;
+  const devSignIn = useCallback((email: string, name: string) => {
+    if (import.meta.env.DEV) {
+      devSignInHandler(email, name, setLogoutNotice, setSession, setProfile, setLoading);
     }
-    localStorage.setItem('haya_dev_auth', JSON.stringify({ email, name }));
-    const dev = getInitialDevSession();
-    if (dev) {
-      setSession(dev.session);
-      setProfile(dev.profile);
-      setLoading(false);
-      localStorage.setItem('haya_last_activity', String(Date.now()));
-      void flushUnsyncedRecords(dev.profile.id);
-    }
-  }
+  }, []);
 
   const signOut = useCallback(async (reason?: string) => {
     localStorage.removeItem('haya_dev_auth');
@@ -166,18 +204,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       if (data?.session) {
-        const userEmail = data.session.user?.email;
-        if (!isAuthorizedEmail(userEmail)) {
-          // Reject unauthorized account
-          void signOut('Access denied: account not on the HAYA Games allowlist.');
-          setLoading(false);
-          return;
-        }
-
         setSession(data.session);
         const uid = data.session.user?.id;
         if (uid) {
-          loadProfile(uid, userEmail).finally(() => mounted && setLoading(false));
+          loadProfile(uid, data.session.user?.email).finally(() => mounted && setLoading(false));
         } else {
           setLoading(false);
         }
@@ -191,16 +221,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
       if (!mounted) return;
       if (newSession) {
-        const userEmail = newSession.user?.email;
-        if (!isAuthorizedEmail(userEmail)) {
-          void signOut('Access denied: account not on the HAYA Games allowlist.');
-          return;
-        }
-
         setSession(newSession);
         const uid = newSession.user?.id;
         if (uid) {
-          void loadProfile(uid, userEmail);
+          void loadProfile(uid, newSession.user?.email);
         } else {
           setProfile(null);
         }
@@ -336,9 +360,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signIn(email: string, password: string) {
     const cleanEmail = email.trim().toLowerCase();
-    if (!isAuthorizedEmail(cleanEmail)) {
-      return { error: 'This email is not authorized to use HAYA Games.' };
-    }
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -361,15 +382,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed';
-      return { error: `Connection failed: ${msg}. If offline, select your profile above.` };
+      return { error: `Connection failed: ${msg}. If offline, try again.` };
     }
   }
 
   async function signUp(email: string, password: string) {
     const cleanEmail = email.trim().toLowerCase();
-    if (!isAuthorizedEmail(cleanEmail)) {
-      return { error: 'This email is not authorized to use HAYA Games.' };
-    }
 
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -408,17 +426,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-function translateAuthError(msg: string): string {
-  const m = msg.toLowerCase();
-  if (m.includes('invalid login credentials')) return 'Incorrect email or password.';
-  if (m.includes('not authorized')) return 'This email is not authorized to use HAYA Games.';
-  if (m.includes('rate limit') || m.includes('for security purposes')) {
-    return 'Too many attempts. Please wait a minute and try again.';
-  }
-  if (m.includes('already registered') || m.includes('already been registered')) {
-    return 'That account already exists. Try signing in instead.';
-  }
-  return msg;
 }

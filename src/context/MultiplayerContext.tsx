@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/auth/AuthContext';
-import { getAllowedEmails, setMatchActiveState } from '@/auth/authUtils';
+import { setMatchActiveState } from '@/auth/authUtils';
 import { useRouter } from '@/router';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import type { AvatarConfig } from '@/types/avatar';
@@ -47,41 +47,88 @@ type MultiplayerContextType = {
 
 const MultiplayerContext = createContext<MultiplayerContextType | undefined>(undefined);
 
-function getAuthorizedAccounts(): { email: string; name: string; emoji: string }[] {
-  const allowed = getAllowedEmails();
-  const p1 = allowed[0] || '';
-  const p2 = allowed[1] || '';
-  return [
-    { email: p1, name: 'Aditya', emoji: '🎮' },
-    { email: p2, name: 'Harika', emoji: '✨' },
-  ];
-}
-
 export function MultiplayerProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { navigate } = useRouter();
 
-  const accounts = getAuthorizedAccounts();
   const myEmail = user?.email?.toLowerCase().trim() || '';
-  const myFriendInfo = accounts.find((a) => a.email && a.email.toLowerCase() !== myEmail) || {
-    email: accounts[0]?.email.toLowerCase() === myEmail ? (accounts[1]?.email || '') : (accounts[0]?.email || ''),
-    name: accounts[0]?.email.toLowerCase() === myEmail ? 'Harika' : 'Aditya',
-    emoji: accounts[0]?.email.toLowerCase() === myEmail ? '✨' : '🎮',
-  };
-
   const myDisplayName =
-    accounts.find((a) => a.email && a.email.toLowerCase() === myEmail)?.name ||
+    profile?.display_name ||
+    user?.user_metadata?.display_name ||
     (myEmail ? myEmail.split('@')[0] : 'Player');
 
-  const [friend, setFriend] = useState<FriendState>({
-    email: myFriendInfo.email,
-    name: myFriendInfo.name,
-    emoji: myFriendInfo.emoji,
-    avatar: getCachedAvatar(myFriendInfo.email, myFriendInfo.name),
+  const isHarika =
+    myDisplayName.toLowerCase().includes('harika') ||
+    myEmail.toLowerCase().includes('harika');
+  const defaultFriendName = isHarika ? 'Aditya' : 'Harika';
+  const defaultFriendEmoji = isHarika ? '🎮' : '✨';
+
+  const [friend, setFriend] = useState<FriendState>(() => ({
+    email: '',
+    name: defaultFriendName,
+    emoji: defaultFriendEmoji,
+    avatar: getCachedAvatar('', defaultFriendName),
     status: 'offline',
     currentGame: null,
     lastSeen: null,
-  });
+  }));
+
+  // Fetch friend profile from the Supabase profiles table via authenticated RLS
+  useEffect(() => {
+    if (!user) return;
+    let mounted = true;
+
+    supabase
+      .from('profiles')
+      .select('id, email, display_name, avatar_data')
+      .neq('id', user.id)
+      .limit(1)
+      .maybeSingle()
+      .then(
+        ({ data, error }) => {
+          if (!mounted) return;
+          if (error) {
+            console.warn('[MultiplayerContext] Friend profile fetch notice:', error.message);
+            return;
+          }
+          if (data) {
+            const friendEmail = data.email || '';
+            const friendName = data.display_name || (friendEmail.toLowerCase().includes('harika') ? 'Harika' : 'Aditya');
+            const friendEmoji = friendName.toLowerCase().includes('harika') ? '✨' : '🎮';
+            setFriend((prev) => ({
+              ...prev,
+              email: friendEmail,
+              name: friendName,
+              emoji: friendEmoji,
+              avatar: (data.avatar_data as AvatarConfig) || prev.avatar || getCachedAvatar(friendEmail, friendName),
+            }));
+          }
+        },
+        (err: unknown) => {
+          console.warn('[MultiplayerContext] Failed to load friend profile:', err);
+        }
+      );
+
+    return () => {
+      mounted = false;
+    };
+  }, [user]);
+
+  // DEV-only fallback for mock dev accounts
+  useEffect(() => {
+    if (import.meta.env.DEV && user && !friend.email) {
+      const devEmails = ((import.meta.env as Record<string, string | undefined>).VITE_ALLOWED_EMAILS || '')
+        .split(',')
+        .map((e: string) => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (devEmails.length > 1) {
+        const otherDev = devEmails.find((e: string) => e !== myEmail) || (isHarika ? devEmails[0] : devEmails[1]);
+        if (otherDev) {
+          setFriend((prev) => ({ ...prev, email: otherDev }));
+        }
+      }
+    }
+  }, [user, myEmail, isHarika, friend.email]);
 
   const [outgoingInvite, setOutgoingInvite] = useState<Invitation | null>(null);
   const [incomingInvite, setIncomingInvite] = useState<Invitation | null>(null);
@@ -155,7 +202,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         (presences as any[]).forEach((p) => {
           const isFriend =
             (p.userId && p.userId !== user.id) ||
-            (p.displayName && p.displayName.toLowerCase() === myFriendInfo.name.toLowerCase());
+            (p.displayName && p.displayName.toLowerCase() === friend.name.toLowerCase());
           if (isFriend) {
             friendOnline = true;
             friendStatus = p.status || 'online';
@@ -173,7 +220,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         status: friendOnline ? friendStatus : 'offline',
         currentGame: friendOnline ? friendGame : null,
         lastSeen: friendOnline ? lastTimestamp : prev.lastSeen,
-        avatar: friendAvatar || prev.avatar || getCachedAvatar(myFriendInfo.email, myFriendInfo.name),
+        avatar: friendAvatar || prev.avatar || getCachedAvatar(friend.email, friend.name),
       }));
     })
       .on('presence', { event: 'leave' }, ({ key }) => {
@@ -211,7 +258,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
                 matchId,
                 gameId,
                 role: 'host',
-                opponentName: myFriendInfo.name,
+                opponentName: friend.name,
               });
               // Update presence to in_match
               updatePresence('in_match', gameId);
@@ -220,7 +267,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
               return null;
             } else if (status === 'declined') {
               arcadeAudio.playDraw();
-              alert(`${myFriendInfo.name} is unable to play right now.`);
+              alert(`${friend.name} is unable to play right now.`);
               return null;
             } else if (status === 'cancelled') {
               return null;
@@ -255,7 +302,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       void ch.unsubscribe();
       lobbyChannelRef.current = null;
     };
-  }, [user, myEmail, myFriendInfo.email, myFriendInfo.name, friend.email, updatePresence, navigate]);
+  }, [user, myEmail, friend.email, friend.name, updatePresence, navigate]);
 
   // Subscribe to Postgres Realtime changes on multiplayer_invitations table
   useEffect(() => {
@@ -317,7 +364,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
                 matchId: row.match_id,
                 gameId: row.game_id,
                 role: 'host',
-                opponentName: myFriendInfo.name,
+                opponentName: friend.name,
               });
               setOutgoingInvite(null);
               updatePresence('in_match', row.game_id);
@@ -339,7 +386,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     return () => {
       void channel.unsubscribe();
     };
-  }, [user, myEmail, myFriendInfo.name, updatePresence, navigate]);
+  }, [user, myEmail, friend.name, updatePresence, navigate]);
 
   // Actions
   const sendInvite = useCallback((gameId: string) => {
@@ -358,7 +405,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       fromEmail: myEmail,
       fromName: myDisplayName,
       fromAvatar: getCachedAvatar(myEmail, myDisplayName),
-      toEmail: myFriendInfo.email,
+      toEmail: friend.email,
       gameId,
       matchId,
       createdAt: Date.now(),
@@ -382,7 +429,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
           id: inviteId,
           from_email: myEmail,
           from_name: myDisplayName,
-          to_email: myFriendInfo.email,
+          to_email: friend.email,
           game_id: gameId,
           match_id: matchId,
           status: 'pending',
@@ -394,7 +441,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
           console.warn('[MultiplayerContext] DB invitation insert notice:', error.message);
         }
       });
-  }, [friend.status, myEmail, myDisplayName, myFriendInfo.email]);
+  }, [friend.status, friend.email, myEmail, myDisplayName]);
 
   const cancelOutgoingInvite = useCallback(() => {
     if (!outgoingInvite || !lobbyChannelRef.current) return;

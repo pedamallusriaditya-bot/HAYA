@@ -208,3 +208,98 @@ export function getBotColors(humanColor: LudoColor, botCount: 1 | 2 | 3): LudoCo
 
   return sorted.slice(0, botCount);
 }
+
+/**
+ * Applies a remote opponent's move onto the player state array immutably.
+ * Returns the new players array, victory status, and move metadata.
+ */
+export function applyRemoteMove(
+  players: PlayerState[],
+  color: LudoColor,
+  tokenId: number,
+  roll: number
+): {
+  nextPlayers: PlayerState[];
+  isWinningMove: boolean;
+  winner: PlayerState | null;
+  moveResult: MoveResult;
+} {
+  const actor = players.find((p) => p.color === color);
+  if (!actor) {
+    return {
+      nextPlayers: players,
+      isWinningMove: false,
+      winner: null,
+      moveResult: {
+        capturedOpponentTokenId: null,
+        capturedOpponentColor: null,
+        reachedHome: false,
+        givesExtraTurn: false,
+      },
+    };
+  }
+
+  const actorClone: PlayerState = {
+    ...actor,
+    tokens: actor.tokens.map((t) => ({ ...t })),
+  };
+  const othersClone: PlayerState[] = players
+    .filter((p) => p.color !== color)
+    .map((p) => ({ ...p, tokens: p.tokens.map((t) => ({ ...t })) }));
+
+  const moveResult = executeMove(actorClone, othersClone, tokenId, roll);
+  const isWinningMove = hasPlayerWon(actorClone);
+  const winner = isWinningMove ? actorClone : null;
+
+  const nextPlayers = players.map((p) => {
+    if (p.color === color) return actorClone;
+    const updatedOther = othersClone.find((o) => o.color === p.color);
+    return updatedOther || p;
+  });
+
+  return { nextPlayers, isWinningMove, winner, moveResult };
+}
+
+/**
+ * Determines the next player color in round-robin order.
+ */
+export function getNextTurnColor(
+  currentColor: LudoColor,
+  activePlayers: PlayerState[]
+): LudoColor {
+  if (activePlayers.length === 0) return currentColor;
+  const idx = activePlayers.findIndex((p) => p.color === currentColor);
+  if (idx === -1) return activePlayers[0].color;
+  const nextIdx = (idx + 1) % activePlayers.length;
+  return activePlayers[nextIdx].color;
+}
+
+/**
+ * Creates fresh PlayerState objects for an online 2-player match with reserved colors.
+ */
+export function createOnlineMatchPlayers(
+  myColor: LudoColor,
+  opponentColor: LudoColor,
+  opponentName = 'Opponent'
+): { players: PlayerState[]; startingTurn: LudoColor } {
+  const p1: PlayerState = {
+    color: myColor,
+    name: `You (${myColor.toUpperCase()})`,
+    isBot: false,
+    tokens: createInitialTokens(),
+    startTrackIndex: COLOR_START_OFFSETS[myColor],
+  };
+
+  const p2: PlayerState = {
+    color: opponentColor,
+    name: `${opponentName} (${opponentColor.toUpperCase()})`,
+    isBot: false,
+    tokens: createInitialTokens(),
+    startTrackIndex: COLOR_START_OFFSETS[opponentColor],
+  };
+
+  const startingTurn =
+    myColor === 'red' ? myColor : opponentColor === 'red' ? opponentColor : myColor;
+
+  return { players: [p1, p2], startingTurn };
+}

@@ -13,28 +13,22 @@ export const LAST_ACTIVITY_KEY = 'haya_last_activity';
 export const IN_MATCH_KEY = 'haya_in_match';
 export const IN_MATCH_TIME_KEY = 'haya_in_match_since';
 export const LOGOUT_NOTICE_KEY = 'haya_logout_notice';
-export function getAllowedEmails(): string[] {
-  const raw =
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_ALLOWED_EMAILS) ||
-    (typeof process !== 'undefined' && process.env?.VITE_ALLOWED_EMAILS) ||
-    '';
 
-  return raw
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-}
-export function isAuthorizedEmail(
-  email: string | null | undefined,
-  customAllowed?: readonly string[] | string[]
-): boolean {
-  if (!email) return false;
-  const clean = email.trim().toLowerCase();
-  const allowed =
-    customAllowed && customAllowed.length > 0
-      ? customAllowed.map((e) => e.trim().toLowerCase())
-      : getAllowedEmails();
-  return allowed.includes(clean);
+/**
+ * Translates Supabase auth error messages into user-friendly messages.
+ * Maps the database trigger's "not authorized" message to a clear authorization warning.
+ */
+export function translateAuthError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes('invalid login credentials')) return 'Incorrect email or password.';
+  if (m.includes('not authorized')) return 'This email is not authorized to use HAYA Games.';
+  if (m.includes('rate limit') || m.includes('for security purposes')) {
+    return 'Too many attempts. Please wait a minute and try again.';
+  }
+  if (m.includes('already registered') || m.includes('already been registered')) {
+    return 'That account already exists. Try signing in instead.';
+  }
+  return msg;
 }
 
 /**
@@ -312,10 +306,7 @@ export function createFallbackProfile(
   uid: string,
   emailHint: string
 ): FallbackProfile {
-  const allowed = getAllowedEmails();
-  const isSecond =
-    (allowed.length > 1 && emailHint.toLowerCase() === allowed[1].toLowerCase()) ||
-    emailHint.toLowerCase().includes('harika');
+  const isSecond = emailHint.toLowerCase().includes('harika');
 
   return {
     id: uid,

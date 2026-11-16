@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { RotateCcw, Trophy, Play, ArrowLeft } from 'lucide-react';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import { useHighScore } from '@/lib/useHighScore';
@@ -19,6 +19,9 @@ import {
   countTokensHome,
   getBotColors,
   COLOR_START_OFFSETS,
+  applyRemoteMove,
+  getNextTurnColor,
+  createOnlineMatchPlayers,
   type PlayerState,
   type LudoColor,
 } from './engine';
@@ -71,6 +74,21 @@ export default function LudoGame() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const matchChannelRef = useRef<any>(null);
 
+  // Mutable refs to prevent stale closures inside long-lived Realtime channel subscriptions
+  const onlineMyColorRef = useRef<LudoColor | null>(onlineMyColor);
+  onlineMyColorRef.current = onlineMyColor;
+
+  const onlineOpponentColorRef = useRef<LudoColor | null>(onlineOpponentColor);
+  onlineOpponentColorRef.current = onlineOpponentColor;
+
+  const handleRemoteMoveRef = useRef<
+    (color: LudoColor, tokenId: number, roll: number, givesExtraTurn: boolean) => void
+  >(() => {});
+  const startOnlineMatchRef = useRef<(myCol: LudoColor, oppCol: LudoColor) => void>(() => {});
+
+  const setInMatchStatusRef = useRef(setInMatchStatus);
+  setInMatchStatusRef.current = setInMatchStatus;
+
   // Check if active match from invitation or URL query parameter
   const matchId = activeMatch?.matchId || (path.includes('match=') ? path.split('match=')[1]?.split('&')[0] : null);
 
@@ -89,11 +107,13 @@ export default function LudoGame() {
   }, [matchId]);
 
   // Online Realtime match channel subscription
+  const profileId = profile?.id;
+  const myName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
+
   useEffect(() => {
     if (!matchId) return;
 
-    setInMatchStatus(true, 'ludo');
-    const myName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
+    setInMatchStatusRef.current(true, 'ludo');
 
     const ch = supabase.channel(`haya-match-${matchId}`, {
       config: {
@@ -111,7 +131,7 @@ export default function LudoGame() {
     })
       .on('broadcast', { event: 'ludo_move' }, ({ payload }) => {
         const { color, tokenId, roll, givesExtraTurn } = payload;
-        handleRemoteMove(color, tokenId, roll, givesExtraTurn);
+        handleRemoteMoveRef.current(color, tokenId, roll, givesExtraTurn);
       })
       .on('broadcast', { event: 'ludo_roll' }, ({ payload }) => {
         const { color, roll } = payload;
@@ -120,8 +140,10 @@ export default function LudoGame() {
         arcadeAudio.playBlip();
       })
       .on('broadcast', { event: 'ludo_restart' }, () => {
-        if (onlineMyColor && onlineOpponentColor) {
-          startOnlineMatch(onlineMyColor, onlineOpponentColor);
+        const myCol = onlineMyColorRef.current;
+        const oppCol = onlineOpponentColorRef.current;
+        if (myCol && oppCol) {
+          startOnlineMatchRef.current(myCol, oppCol);
         }
       })
       .subscribe((status) => {
@@ -134,7 +156,7 @@ export default function LudoGame() {
       void ch.unsubscribe();
       matchChannelRef.current = null;
     };
-  }, [matchId, profile, setInMatchStatus]);
+  }, [matchId, profileId, myName]);
 
   // Build active player states for offline match based on chosen color and bot count
   const buildOfflinePlayers = useCallback(
@@ -185,26 +207,13 @@ export default function LudoGame() {
       setOnlineMyColor(myCol);
       setOnlineOpponentColor(oppCol);
 
-      const p1: PlayerState = {
-        color: myCol,
-        name: `You (${myCol.toUpperCase()})`,
-        isBot: false,
-        tokens: createInitialTokens(),
-        startTrackIndex: COLOR_START_OFFSETS[myCol],
-      };
+      const { players: initPlayers, startingTurn } = createOnlineMatchPlayers(
+        myCol,
+        oppCol,
+        activeMatch?.opponentName
+      );
 
-      const p2: PlayerState = {
-        color: oppCol,
-        name: `${activeMatch?.opponentName || 'Opponent'} (${oppCol.toUpperCase()})`,
-        isBot: false,
-        tokens: createInitialTokens(),
-        startTrackIndex: COLOR_START_OFFSETS[oppCol],
-      };
-
-      // Standard starting turn is red if present, or host
-      const startingTurn = myCol === 'red' ? myCol : oppCol === 'red' ? oppCol : myCol;
-
-      setPlayers([p1, p2]);
+      setPlayers(initPlayers);
       setCurrentTurn(startingTurn);
       setDiceRolls({ red: null, green: null, yellow: null, blue: null });
       setActiveRoll(null);
@@ -214,25 +223,26 @@ export default function LudoGame() {
       setMode('online_playing');
       arcadeAudio.playCoin();
     },
-    [activeMatch]
+    [activeMatch?.opponentName, resetSession]
   );
+  startOnlineMatchRef.current = startOnlineMatch;
 
   // Active player object
   const activePlayer = players.find((p) => p.color === currentTurn);
   const otherPlayers = players.filter((p) => p.color !== currentTurn);
 
-  // Legal moves for currently active roll
-  const legalTokenIds =
-    activeRoll !== null && winner === null && activePlayer
-      ? getLegalMoves(activePlayer, activeRoll)
-      : [];
+  // Legal moves for currently active roll (memoized to avoid unstable dependency in useEffect)
+  const legalTokenIds = useMemo(() => {
+    if (activeRoll === null || winner !== null || !activePlayer) {
+      return [];
+    }
+    return getLegalMoves(activePlayer, activeRoll);
+  }, [activeRoll, winner, activePlayer]);
 
   // Advance turn to the next active player in the match
   const advanceTurn = useCallback(
     (currentCol: LudoColor, activePlayers: PlayerState[]) => {
-      const idx = activePlayers.findIndex((p) => p.color === currentCol);
-      const nextIdx = (idx + 1) % activePlayers.length;
-      const nextColor = activePlayers[nextIdx].color;
+      const nextColor = getNextTurnColor(currentCol, activePlayers);
 
       setActiveRoll(null);
       setExtraTurn(false);
@@ -369,26 +379,17 @@ export default function LudoGame() {
       let wonActor: PlayerState | null = null;
 
       setPlayers((prev) => {
-        const actor = prev.find((p) => p.color === color);
-        if (!actor) return prev;
-
-        const actorClone = { ...actor, tokens: actor.tokens.map((t) => ({ ...t })) };
-        const othersClone = prev
-          .filter((p) => p.color !== color)
-          .map((p) => ({ ...p, tokens: p.tokens.map((t) => ({ ...t })) }));
-
-        executeMove(actorClone, othersClone, tokenId, roll);
-
-        if (hasPlayerWon(actorClone)) {
+        const { nextPlayers, isWinningMove, winner: victor } = applyRemoteMove(
+          prev,
+          color,
+          tokenId,
+          roll
+        );
+        if (isWinningMove && victor) {
           isOpponentVictorious = true;
-          wonActor = actorClone;
+          wonActor = victor;
         }
-
-        return prev.map((p) => {
-          if (p.color === color) return actorClone;
-          const updatedOther = othersClone.find((o) => o.color === p.color);
-          return updatedOther || p;
-        });
+        return nextPlayers;
       });
 
       if (isOpponentVictorious && wonActor) {
@@ -420,6 +421,7 @@ export default function LudoGame() {
     },
     [advanceTurn, activeMatch?.opponentName, matchId, recordResult]
   );
+  handleRemoteMoveRef.current = handleRemoteMove;
 
   // Bot Turn Automation (Deterministic & strict; NO temporary rolling messages)
   useEffect(() => {
@@ -472,6 +474,23 @@ export default function LudoGame() {
     rollDice,
     handleTokenMove,
   ]);
+
+  const handleRestartMatch = useCallback(() => {
+    if (mode === 'online_playing') {
+      if (onlineMyColor && onlineOpponentColor) {
+        startOnlineMatch(onlineMyColor, onlineOpponentColor);
+        if (matchChannelRef.current) {
+          void matchChannelRef.current.send({
+            type: 'broadcast',
+            event: 'ludo_restart',
+            payload: {},
+          });
+        }
+      }
+    } else {
+      startOfflineMatch();
+    }
+  }, [mode, onlineMyColor, onlineOpponentColor, startOnlineMatch, startOfflineMatch]);
 
   const toggleSound = () => {
     const next = arcadeAudio.toggleSound();
@@ -719,15 +738,7 @@ export default function LudoGame() {
           }
           setMode('choose');
         }}
-        onRestart={() => {
-          if (mode === 'online_playing') {
-            if (onlineMyColor && onlineOpponentColor) {
-              startOnlineMatch(onlineMyColor, onlineOpponentColor);
-            }
-          } else {
-            startOfflineMatch();
-          }
-        }}
+        onRestart={handleRestartMatch}
         statusText={
           winner !== null
             ? `🎉 Game Finished! ${winner.name} won!`
@@ -757,15 +768,7 @@ export default function LudoGame() {
           <div className="flex justify-center pt-2">
             <button
               type="button"
-              onClick={() => {
-                if (mode === 'online_playing') {
-                  if (onlineMyColor && onlineOpponentColor) {
-                    startOnlineMatch(onlineMyColor, onlineOpponentColor);
-                  }
-                } else {
-                  startOfflineMatch();
-                }
-              }}
+              onClick={handleRestartMatch}
               className="btn-primary py-2.5 px-6 text-xs font-bold uppercase tracking-wider flex items-center gap-2"
             >
               <RotateCcw className="h-4 w-4" /> Rematch

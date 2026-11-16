@@ -6,8 +6,6 @@ const TEST_EMAIL_2 = 'test.player2@haya.local';
 const TEST_UID_1 = '00000000-0000-0000-0000-000000000001';
 const TEST_UID_2 = '00000000-0000-0000-0000-000000000002';
 
-// Configure test environment variable for allowed emails
-process.env.VITE_ALLOWED_EMAILS = `${TEST_EMAIL_1},${TEST_EMAIL_2}`;
 
 // Mock localStorage for node environment
 const storage = new Map<string, string>();
@@ -84,7 +82,7 @@ if (mock && typeof mock.module === 'function') {
   });
 }
 
-import { isAuthorizedEmail } from '../auth/authUtils.ts';
+import { translateAuthError } from '../auth/authUtils.ts';
 const { getCachedAvatar, saveUserAvatar } = await import('./avatarStorage.ts');
 const {
   getLocalRecords,
@@ -94,17 +92,42 @@ const {
   saveUserPreferences,
 } = await import('./gameRecordsService.ts');
 
-test('Security Allowlist: Only configured authorized accounts permitted', () => {
-  assert.equal(isAuthorizedEmail(TEST_EMAIL_1), true);
-  assert.equal(isAuthorizedEmail(TEST_EMAIL_2), true);
-  assert.equal(isAuthorizedEmail(TEST_EMAIL_1.toUpperCase()), true);
-  assert.equal(isAuthorizedEmail(TEST_EMAIL_2.toUpperCase()), true);
+test('Auth Error Translation: DB trigger and auth exceptions properly translated', () => {
+  // DB trigger error when an unauthorized user attempts to sign up or update email
+  const dbTriggerError = 'This email is not authorized to use HAYA Games.';
+  assert.equal(
+    translateAuthError(dbTriggerError),
+    'This email is not authorized to use HAYA Games.'
+  );
+  assert.equal(
+    translateAuthError('Database error: User is not authorized to register.'),
+    'This email is not authorized to use HAYA Games.'
+  );
 
-  assert.equal(isAuthorizedEmail('unknown@example.com'), false);
-  assert.equal(isAuthorizedEmail('attacker@haya.local'), false);
-  assert.equal(isAuthorizedEmail(''), false);
-  assert.equal(isAuthorizedEmail(null), false);
-  assert.equal(isAuthorizedEmail(undefined), false);
+  // Invalid credentials
+  assert.equal(
+    translateAuthError('Invalid login credentials'),
+    'Incorrect email or password.'
+  );
+
+  // Rate limiting / security pause
+  assert.equal(
+    translateAuthError('Email rate limit exceeded'),
+    'Too many attempts. Please wait a minute and try again.'
+  );
+  assert.equal(
+    translateAuthError('For security purposes, you can only request this once every 60 seconds'),
+    'Too many attempts. Please wait a minute and try again.'
+  );
+
+  // Already registered
+  assert.equal(
+    translateAuthError('User already registered'),
+    'That account already exists. Try signing in instead.'
+  );
+
+  // Unhandled generic error passes through
+  assert.equal(translateAuthError('Service unavailable'), 'Service unavailable');
 });
 
 test('Avatar System: Independent persistence between Player 1 and Player 2', async () => {
