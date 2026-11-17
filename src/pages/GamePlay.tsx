@@ -1,19 +1,8 @@
 import { ArrowLeft, BookOpen, Loader2 } from 'lucide-react';
-import { lazy, Suspense, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Link, useRouter } from '@/router';
 import { getGame } from '@/games/registry';
-
-const SudokuGame = lazy(() => import('@/games/sudoku/SudokuGame'));
-const MinesweeperGame = lazy(() => import('@/games/minesweeper/MinesweeperGame'));
-const Game2048 = lazy(() => import('@/games/game2048/Game2048'));
-const MazeGame = lazy(() => import('@/games/maze/MazeGame'));
-const MemoryGame = lazy(() => import('@/games/memory/MemoryGame'));
-const TicTacToeGame = lazy(() => import('@/games/tictactoe/TicTacToeGame'));
-const ChessGame = lazy(() => import('@/games/chess/ChessGame'));
-const Connect4Game = lazy(() => import('@/games/connect4/Connect4Game'));
-const LudoGame = lazy(() => import('@/games/ludo/LudoGame'));
-const SnakesGame = lazy(() => import('@/games/snakes/SnakesGame'));
-const CarromGame = lazy(() => import('@/games/carrom/CarromGame'));
+import { GAME_COMPONENTS } from '@/games/components';
 
 function ArcadeLoadingFallback() {
   return (
@@ -30,8 +19,9 @@ export default function GamePlay({ gameId }: { gameId: string }) {
   const game = getGame(gameId);
   const { navigate } = useRouter();
   const [showRules, setShowRules] = useState(false);
+  const GameComponent = game ? GAME_COMPONENTS[game.id] : undefined;
 
-  if (!game || game.status !== 'playable') {
+  if (!game || game.status !== 'playable' || !GameComponent) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 text-center animate-in">
         <h1 className="text-2xl font-bold mb-2 text-slate-100" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -94,17 +84,7 @@ export default function GamePlay({ gameId }: { gameId: string }) {
 
       <div className="arcade-cabinet p-2.5 xs:p-3.5 sm:p-6 lg:p-7 min-h-[400px] flex flex-col justify-center">
         <Suspense fallback={<ArcadeLoadingFallback />}>
-          {gameId === 'sudoku' && <SudokuGame />}
-          {gameId === 'minesweeper' && <MinesweeperGame />}
-          {gameId === '2048' && <Game2048 />}
-          {gameId === 'maze' && <MazeGame />}
-          {gameId === 'memory' && <MemoryGame />}
-          {gameId === 'tictactoe' && <TicTacToeGame />}
-          {gameId === 'chess' && <ChessGame />}
-          {gameId === 'connect4' && <Connect4Game />}
-          {gameId === 'ludo' && <LudoGame />}
-          {gameId === 'snakes' && <SnakesGame />}
-          {gameId === 'carrom' && <CarromGame />}
+          <GameComponent />
         </Suspense>
       </div>
     </div>
