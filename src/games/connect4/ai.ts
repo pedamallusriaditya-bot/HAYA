@@ -7,7 +7,7 @@ import {
   checkWinner,
   type Connect4Board,
   type Connect4Piece,
-} from './engine';
+} from './engine.ts';
 
 // Center-first column ordering for high-performance alpha-beta pruning
 const COLUMN_ORDER = [3, 2, 4, 1, 5, 0, 6];

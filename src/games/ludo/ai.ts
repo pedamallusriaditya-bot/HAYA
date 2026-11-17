@@ -7,7 +7,7 @@ import {
   SAFE_TRACK_INDICES,
   type PlayerState,
   type Token,
-} from './engine';
+} from './engine.ts';
 export async function getLudoBotMove(
   botPlayer: PlayerState,
   opponents: PlayerState | PlayerState[],

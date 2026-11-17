@@ -1,4 +1,4 @@
-import { checkWinner, getLegalMoves, type Board, type Player } from './engine';
+import { checkWinner, getLegalMoves, type Board, type Player } from './engine.ts';
 
 export type BotDifficulty = 'easy' | 'medium' | 'hard';
 
