@@ -78,7 +78,6 @@ if (import.meta.env.DEV) {
         email,
         display_name: name,
         is_admin: false,
-        preferences: { sound: true, music: true },
       };
       return { session: mockSession, profile: mockProfile };
     } catch {

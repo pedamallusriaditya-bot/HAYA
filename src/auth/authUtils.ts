@@ -299,7 +299,6 @@ export type FallbackProfile = {
   email: string;
   display_name: string;
   is_admin: boolean;
-  preferences: { sound: boolean; music: boolean };
 };
 
 export function createFallbackProfile(
@@ -313,6 +312,5 @@ export function createFallbackProfile(
     email: emailHint,
     display_name: isSecond ? 'Harika' : 'Aditya',
     is_admin: false,
-    preferences: { sound: true, music: true },
   };
 }

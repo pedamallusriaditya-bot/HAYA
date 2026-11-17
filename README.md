@@ -222,6 +222,7 @@ If setting up a fresh Supabase project or unpausing an existing instance, execut
 10. `20261106000000_profile_insert_lockdown.sql` — Revokes INSERT on public.profiles from authenticated and anon roles (profiles are created exclusively via the SECURITY DEFINER signup trigger) and ensures RLS is explicitly enabled on realtime.messages.
 11. `20261106010000_game_records_match_id_not_null.sql` — Backfills NULL match_id values in public.game_records with `gen_random_uuid()::text` and sets match_id to `NOT NULL` to enforce deterministic deduplication via `UNIQUE (user_id, match_id)` across retried flushes.
 12. `20261106020000_realtime_topic_scoping.sql` — Scopes realtime.messages SELECT and INSERT RLS policies to authorized topics ('haya-global-lobby', 'haya-invitations-db', and 'haya-match-%').
+13. `20261106030000_invitation_trigger_security_invoker.sql` — Recreates `public.protect_invitation_update()` as `SECURITY INVOKER` to execute under calling user context instead of elevated definer rights.
 
 ### 🔒 Seeding Authorized Player Accounts
 

@@ -36,7 +36,6 @@ export type Profile = {
   display_name: string | null;
   is_admin: boolean;
   avatar_data?: Record<string, unknown> | null;
-  preferences?: UserPreferences;
   created_at?: string;
   updated_at?: string;
 };
