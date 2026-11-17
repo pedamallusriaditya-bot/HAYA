@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RotateCcw, Trophy, Play, ArrowLeft } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import { useHighScore } from '@/lib/useHighScore';
 import { useGameRecorder } from '@/lib/useGameRecorder';
@@ -7,16 +7,13 @@ import { useAuth } from '@/auth/AuthContext';
 import { useMultiplayer } from '@/context/MultiplayerContext';
 import { useRouter } from '@/router';
 import { supabase } from '@/lib/supabase';
-import FriendMatchStation from '@/components/FriendMatchStation';
 import BotMatchHeader from '@/components/bot/BotMatchHeader';
-import ArcadeDifficultySlider from '@/components/common/ArcadeDifficultySlider';
-import { LUDO_DIFFICULTIES, LUDO_DIFFICULTIES_HARDEST_FIRST, type DifficultyTier } from '@/components/bot/botConfigs';
+import { LUDO_DIFFICULTIES_HARDEST_FIRST, type DifficultyTier } from '@/components/bot/botConfigs';
 import {
   createInitialTokens,
   getLegalMoves,
   executeMove,
   hasPlayerWon,
-  countTokensHome,
   getBotColors,
   COLOR_START_OFFSETS,
   applyRemoteMove,
@@ -26,9 +23,9 @@ import {
   type LudoColor,
 } from './engine';
 import { getLudoBotMove } from './ai';
-import LudoBoard from './LudoBoard';
-import PlayerDiceCard from './PlayerDiceCard';
 import OnlineColorReservation from './OnlineColorReservation';
+import { LudoChooseView, LudoOfflineConfigView } from './LudoSetupViews';
+import LudoActiveBoardView from './LudoActiveBoardView';
 import { getCachedAvatar } from '@/lib/avatarStorage';
 
 type GameMode = 'choose' | 'offline_config' | 'playing' | 'online_reservation' | 'online_playing';
@@ -499,201 +496,22 @@ export default function LudoGame() {
 
   // 1. PRE-GAME SELECTION & ONLINE INVITATION LOBBY
   if (mode === 'choose') {
-    return (
-      <div className="space-y-6">
-        <FriendMatchStation
-          gameId="ludo"
-          onPlayBot={() => {
-            setMode('offline_config');
-          }}
-          botDifficultyComponent={
-            <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 text-center">
-                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider block mb-1">
-                  Offline Custom Match
-                </span>
-                <p className="text-xs text-slate-400 mb-3">
-                  Play with 1, 2, or 3 bots and customize your color and bot difficulty.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setMode('offline_config')}
-                  className="btn-primary w-full py-2.5 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2"
-                >
-                  <Play className="h-4 w-4" /> Configure Match &amp; Difficulty
-                </button>
-              </div>
-            </div>
-          }
-        />
-      </div>
-    );
+    return <LudoChooseView onConfigureOffline={() => setMode('offline_config')} />;
   }
 
   // 2. OFFLINE MATCH CONFIGURATION SCREEN
   if (mode === 'offline_config') {
-    const botColorsPreview = getBotColors(humanColor, botCount);
-
     return (
-      <div className="arcade-cabinet p-6 sm:p-8 max-w-2xl mx-auto space-y-6 animate-in border-2 border-slate-700/80">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <button
-            type="button"
-            onClick={() => setMode('choose')}
-            className="btn-ghost !py-1.5 !px-3 text-xs flex items-center gap-1.5"
-          >
-            <ArrowLeft className="h-4 w-4" /> Back to Lobby
-          </button>
-          <div className="token-badge">OFFLINE MATCH SETUP</div>
-        </div>
-
-        <div className="text-center space-y-1">
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-100" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-            Configure Ludo Match
-          </h2>
-          <p className="text-xs text-slate-400">
-            Choose your player color, number of bot opponents, and AI difficulty tier.
-          </p>
-        </div>
-
-        {/* 1. Choose Number of Bots */}
-        <div className="space-y-2">
-          <label className="text-xs uppercase font-bold tracking-wider text-slate-300 block">
-            Number of Bot Opponents
-          </label>
-          <div className="grid grid-cols-3 gap-2.5">
-            {[1, 2, 3].map((num) => {
-              const isSelected = botCount === num;
-              return (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => setBotCount(num as 1 | 2 | 3)}
-                  className={`p-3 rounded-xl border-2 text-center transition-all select-none ${
-                    isSelected
-                      ? 'border-amber-400 bg-amber-950/30 text-amber-300 ring-1 ring-amber-400 font-black shadow-md'
-                      : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <span className="block text-base">{num} {num === 1 ? 'Bot' : 'Bots'}</span>
-                  <span className="text-[10px] font-mono text-slate-500 uppercase">
-                    {num + 1} Players Total
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 2. Choose Human Color */}
-        <div className="space-y-2">
-          <label className="text-xs uppercase font-bold tracking-wider text-slate-300 block">
-            Your Player Color
-          </label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            {(['red', 'green', 'yellow', 'blue'] as LudoColor[]).map((c) => {
-              const isSelected = humanColor === c;
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setHumanColor(c)}
-                  className={`p-3 rounded-xl border-2 text-center transition-all select-none flex flex-col items-center gap-1.5 ${
-                    isSelected
-                      ? 'border-amber-400 bg-amber-950/30 ring-1 ring-amber-400 shadow-md'
-                      : 'border-slate-800 bg-slate-900/60 hover:border-slate-700 opacity-80'
-                  }`}
-                >
-                  <span
-                    className={`w-5 h-5 rounded-full ${
-                      c === 'red'
-                        ? 'bg-rose-500 shadow-rose-500/50'
-                        : c === 'green'
-                        ? 'bg-emerald-500 shadow-emerald-500/50'
-                        : c === 'yellow'
-                        ? 'bg-amber-400 shadow-amber-500/50'
-                        : 'bg-sky-500 shadow-sky-500/50'
-                    } shadow-md`}
-                  />
-                  <span className={`text-xs font-bold uppercase ${isSelected ? 'text-amber-300' : 'text-slate-200'}`}>
-                    {c}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 3. Match Player Roster Preview */}
-        <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
-          <span className="text-[11px] font-mono uppercase font-bold text-slate-400 block">
-            Match Player Roster ({botCount + 1} Active Players):
-          </span>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {/* Human */}
-            <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center gap-2">
-              <span
-                className={`w-3 h-3 rounded-full shrink-0 ${
-                  humanColor === 'red'
-                    ? 'bg-rose-500'
-                    : humanColor === 'green'
-                    ? 'bg-emerald-500'
-                    : humanColor === 'yellow'
-                    ? 'bg-amber-400'
-                    : 'bg-sky-500'
-                }`}
-              />
-              <div className="truncate">
-                <span className="font-bold text-xs text-slate-100 block truncate">You</span>
-                <span className="text-[9px] font-mono text-amber-400">HUMAN</span>
-              </div>
-            </div>
-
-            {/* Assigned Bots */}
-            {botColorsPreview.map((bColor, idx) => (
-              <div
-                key={bColor}
-                className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center gap-2"
-              >
-                <span
-                  className={`w-3 h-3 rounded-full shrink-0 ${
-                    bColor === 'red'
-                      ? 'bg-rose-500'
-                      : bColor === 'green'
-                      ? 'bg-emerald-500'
-                      : bColor === 'yellow'
-                      ? 'bg-amber-400'
-                      : 'bg-sky-500'
-                  }`}
-                />
-                <div className="truncate">
-                  <span className="font-bold text-xs text-slate-300 block truncate">
-                    Bot {idx + 1}
-                  </span>
-                  <span className="text-[9px] font-mono text-slate-500">AI</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 4. Arcade Difficulty Slider */}
-        <ArcadeDifficultySlider
-          difficulties={LUDO_DIFFICULTIES}
-          selectedId={selectedLevel}
-          onSelect={(lvl) => setSelectedLevel(Number(lvl))}
-          title="Ludo Bot Difficulty"
-        />
-
-        {/* Start Match Action */}
-        <button
-          type="button"
-          onClick={startOfflineMatch}
-          className="btn-primary w-full py-3.5 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shadow-xl shadow-amber-500/20"
-        >
-          <Play className="h-4 w-4" /> Start Ludo Match ({botCount + 1} Players)
-        </button>
-      </div>
+      <LudoOfflineConfigView
+        botCount={botCount}
+        setBotCount={setBotCount}
+        humanColor={humanColor}
+        setHumanColor={setHumanColor}
+        selectedLevel={selectedLevel}
+        setSelectedLevel={setSelectedLevel}
+        onStartMatch={startOfflineMatch}
+        onBack={() => setMode('choose')}
+      />
     );
   }
 
@@ -778,56 +596,23 @@ export default function LudoGame() {
       )}
 
       {/* Main Board & Players Layout */}
-      <div className="lg:flex lg:items-start lg:justify-center lg:gap-8 max-w-5xl mx-auto space-y-6 lg:space-y-0">
-        {/* Ludo Board */}
-        <div className="w-full max-w-[440px] sm:max-w-[480px] mx-auto shrink-0">
-          <LudoBoard
-            players={players}
-            legalTokenIds={legalTokenIds}
-            currentTurn={currentTurn}
-            onTokenClick={handleTokenMove}
-            disabled={winner !== null || !isHumanTurn}
-          />
-        </div>
-
-        {/* Active Players & Individual Dice Cards */}
-        <div className="w-full max-w-[440px] sm:max-w-[480px] lg:max-w-[360px] mx-auto space-y-2.5 sm:space-y-3">
-          <div className="flex items-center justify-between text-xs font-mono text-slate-400 px-1">
-            <span className="uppercase font-bold tracking-wider">Active Player Stations</span>
-            <span>{players.length} Active</span>
-          </div>
-
-          <div className={players.length <= 2 ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2' : 'grid grid-cols-2 lg:grid-cols-1 gap-2'}>
-            {players.map((p) => {
-              const isActive = currentTurn === p.color;
-              const isMe = mode === 'online_playing' ? p.color === onlineMyColor : !p.isBot;
-              const canPlayerRoll = isActive && isMe && activeRoll === null && !isRolling && winner === null;
-              const avatarConfig = p.isBot ? undefined : isMe ? myAvatar : friend?.avatar;
-
-              return (
-                <PlayerDiceCard
-                  key={p.color}
-                  player={p}
-                  isActiveTurn={isActive}
-                  isRolling={isActive && isRolling}
-                  lastRoll={diceRolls[p.color]}
-                  onRoll={rollDice}
-                  canRoll={canPlayerRoll}
-                  extraTurn={isActive && extraTurn}
-                  tokensHome={countTokensHome(p)}
-                  avatar={avatarConfig}
-                />
-              );
-            })}
-          </div>
-
-          {/* Quick Rules Reminder */}
-          <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-center text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
-            <Trophy className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-            <span>Roll a 6 to release from yard. Landing on opponent tokens captures them!</span>
-          </div>
-        </div>
-      </div>
+      <LudoActiveBoardView
+        players={players}
+        legalTokenIds={legalTokenIds}
+        currentTurn={currentTurn}
+        onTokenClick={handleTokenMove}
+        isHumanTurn={isHumanTurn}
+        winner={winner}
+        mode={mode}
+        onlineMyColor={onlineMyColor}
+        activeRoll={activeRoll}
+        isRolling={isRolling}
+        diceRolls={diceRolls}
+        onRoll={rollDice}
+        extraTurn={extraTurn}
+        myAvatar={myAvatar}
+        friendAvatar={friend?.avatar}
+      />
     </div>
   );
 }
