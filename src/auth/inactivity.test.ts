@@ -80,39 +80,26 @@ test('Inactivity Manager: Paused during active game matches', () => {
 
 test('Inactivity Manager: Online match vs solo and bot game route detection', () => {
   // Solo and bot game routes must NOT return true - only online matches pause inactivity
-  assert.equal(isMatchActive('/play/carrom'), false);
-  assert.equal(isMatchActive('/play/chess'), false);
-  assert.equal(isMatchActive('/play/2048'), false);
-  assert.equal(isMatchActive('/play/sudoku'), false);
-  assert.equal(isMatchActive('/play/tictactoe'), false);
-  assert.equal(isMatchActive('/play/connect4'), false);
-  assert.equal(isMatchActive('/play/ludo'), false);
-  assert.equal(isMatchActive('/play/snakes'), false);
-
-  // Non-game routes are also not matches
-  assert.equal(isMatchActive('/'), false);
-  assert.equal(isMatchActive('/scores'), false);
-  assert.equal(isMatchActive('/avatar'), false);
-  assert.equal(isMatchActive('/singleplayer'), false);
+  assert.equal(isMatchActive(), false);
+  assert.equal(isMatchActive({}), false);
+  assert.equal(isMatchActive({ activeMatch: null }), false);
+  assert.equal(isMatchActive({ inMatchFlag: false }), false);
 
   // Active match object (e.g. from MultiplayerContext activeMatch) returns true
   assert.equal(
-    isMatchActive({ matchId: 'match_123', gameId: 'chess', role: 'host', opponentName: 'Player2' }),
+    isMatchActive({ activeMatch: { matchId: 'match_123', gameId: 'chess', role: 'host', opponentName: 'Player2' } }),
     true
   );
 
   // Explicit inMatch boolean flag returns true
-  assert.equal(isMatchActive('/scores', true), true);
-  assert.equal(isMatchActive(undefined, true), true);
-  assert.equal(isMatchActive(true), true);
-  assert.equal(isMatchActive(false), false);
-  assert.equal(isMatchActive(null), false);
+  assert.equal(isMatchActive({ inMatchFlag: true }), true);
+  assert.equal(isMatchActive({ inMatchFlag: false }), false);
 });
 
 test('Inactivity Manager: Solo and bot games time out after 5 minutes', () => {
   const start = 1_000_000;
-  // A solo 2048 or chess bot player is on a /play/ route
-  const isMatch = isMatchActive('/play/2048');
+  // A solo 2048 or chess bot player is not in an active online match
+  const isMatch = isMatchActive({ inMatchFlag: false });
   assert.equal(isMatch, false, 'Solo game route must not be treated as an active match');
 
   // 4 minutes without input: still active
@@ -169,13 +156,21 @@ test('Inactivity Manager: isMatchActive treats flag set > 2 hours without activi
   assert.equal(mockStorage.getItem(IN_MATCH_KEY), 'true');
 
   // After 30 minutes: match is still active
-  const check30Min = isMatchActive(null, mockStorage, startTime + 30 * 60 * 1000, startTime);
+  const check30Min = isMatchActive({
+    storage: mockStorage,
+    now: startTime + 30 * 60 * 1000,
+    lastActivityMs: startTime,
+  });
   assert.equal(check30Min, true);
   assert.equal(mockStorage.getItem(IN_MATCH_KEY), 'true');
 
   // After 2 hours + 10 seconds without activity: stale! Returns false and clears storage flag
   const staleTime = startTime + MAX_MATCH_DURATION_MS + 10_000;
-  const checkStale = isMatchActive(null, mockStorage, staleTime, startTime);
+  const checkStale = isMatchActive({
+    storage: mockStorage,
+    now: staleTime,
+    lastActivityMs: startTime,
+  });
   assert.equal(checkStale, false, 'isMatchActive must return false when flag is stale (> 2 hours without activity)');
   assert.equal(mockStorage.getItem(IN_MATCH_KEY), null, 'Stale flag must be cleared from storage');
   assert.equal(mockStorage.getItem(IN_MATCH_TIME_KEY), null);

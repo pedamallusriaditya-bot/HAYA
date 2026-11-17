@@ -273,13 +273,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const nowInit = Date.now();
     const lastInit = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || nowInit);
-    let wasInMatch = isMatchActive(undefined, localStorage, nowInit, lastInit);
+    let wasInMatch = isMatchActive({ storage: localStorage, now: nowInit, lastActivityMs: lastInit });
 
     // Check inactivity periodically
     const checkInterval = setInterval(() => {
       const now = Date.now();
       const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || now);
-      const currentInMatch = isMatchActive(undefined, localStorage, now, last);
+      const currentInMatch = isMatchActive({ storage: localStorage, now, lastActivityMs: last });
 
       // If a match just ended, grant a fresh 5-minute countdown
       if (wasInMatch && !currentInMatch) {
@@ -315,7 +315,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleHashChange = () => {
       const now = Date.now();
       const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || now);
-      const currentInMatch = isMatchActive(undefined, localStorage, now, last);
+      const currentInMatch = isMatchActive({ storage: localStorage, now, lastActivityMs: last });
       if (wasInMatch && !currentInMatch) {
         // Just exited a match: grant a fresh 5-minute countdown
         recordUserActivity();
