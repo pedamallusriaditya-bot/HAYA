@@ -7,10 +7,12 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
+import { useMultiplayer } from '@/context/MultiplayerContext';
 import PlayerAvatar from '@/components/avatar/PlayerAvatar';
 import FriendMatchStation from '@/components/FriendMatchStation';
 import ArcadeDifficultySlider from '@/components/common/ArcadeDifficultySlider';
 import BotMatchHeader from '@/components/bot/BotMatchHeader';
+import OnlineRoom from './OnlineRoom';
 import {
   CARROM_DIFFICULTIES,
   CARROM_DIFFICULTIES_HARDEST_FIRST,
@@ -38,6 +40,7 @@ import type { Piece, PlayerSide, QueenStatus, TurnPhase } from './types';
 type GameMode = 'choose' | 'bot';
 
 export default function CarromGame() {
+  const { activeMatch, exitActiveMatch } = useMultiplayer();
   const { profile } = useAuth();
   const rawName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
   const playerName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
@@ -353,6 +356,21 @@ export default function CarromGame() {
       if (botId.current) clearTimeout(botId.current);
     };
   }, []);
+
+  // Active online match handling
+  if (activeMatch && activeMatch.gameId === 'carrom') {
+    return (
+      <OnlineRoom
+        matchId={activeMatch.matchId}
+        role={activeMatch.role}
+        opponentName={activeMatch.opponentName}
+        onExit={() => {
+          exitActiveMatch();
+          setMode('choose');
+        }}
+      />
+    );
+  }
 
   // Pre-Game Lobby Station
   if (mode === 'choose') {

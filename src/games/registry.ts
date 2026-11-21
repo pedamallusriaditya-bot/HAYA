@@ -179,7 +179,7 @@ export const GAMES: GameMeta[] = [
     description: 'Aim, power up and pocket your pieces in this classic tabletop game with smooth physics and 7 bot levels.',
     mode: 'multi',
     status: 'playable',
-    online: false,
+    online: true,
     icon: Disc,
     gradient: 'from-amber-500/30 to-orange-500/10',
     rules: [
