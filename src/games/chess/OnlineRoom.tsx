@@ -6,6 +6,9 @@ import { useMultiplayer } from '@/context/MultiplayerContext';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import { recordGameResult } from '@/lib/gameRecordsService';
 import { useOnlineMatchChannel } from '@/games/shared/useOnlineMatchChannel';
+import { useGameChat } from '@/games/shared/useGameChat';
+import GameChat from '@/components/GameChat';
+import GameReactions from '@/components/GameReactions';
 import ChessBoard from './ChessBoard';
 import ChessPiece from './ChessPieces';
 import PromotionModal from './PromotionModal';
@@ -80,6 +83,8 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
   // Scoreboard
   const [score, setScore] = useState({ me: 0, opponent: 0, draws: 0 });
 
+  const chat = useGameChat();
+
   // Chess instance for move generation on current FEN
   const currentChess = useMemo(() => {
     return createChessGame(gameState.fen);
@@ -130,10 +135,14 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
     sendMove,
     sendRematch,
     sendExit,
+    sendChat,
+    sendReaction,
   } = useOnlineMatchChannel<ChessActionPayload, StateSnapshot>({
     matchId,
     gameId: 'chess',
     role,
+    onChat: (msg) => chat.addMessage(msg),
+    onReaction: (rx) => chat.addReaction(rx),
     onMove: (action, seq) => {
       if (action.type === 'move') {
         const result = applyOnlineChessMove(
@@ -212,6 +221,7 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
       arcadeAudio.playCoin();
     },
     onExit: () => {
+      chat.clear();
       alert(`${opponentName} left the match.`);
       exitActiveMatch();
       onExit();
@@ -562,6 +572,34 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
       {pendingPromotion && (
         <PromotionModal color={myColor} onSelect={handlePromotionSelect} />
       )}
+
+      <GameChat
+        messages={chat.messages}
+        unread={chat.unread}
+        open={chat.open}
+        setOpen={chat.setOpen}
+        muted={chat.muted}
+        setMuted={chat.setMuted}
+        onSendChat={(text) => {
+          const msg = sendChat(text);
+          if (msg) chat.addMessage(msg, true);
+          return msg;
+        }}
+        myDisplayName={myName}
+        opponentName={opponentName}
+      />
+      <GameReactions
+        floatingReactions={chat.floatingReactions}
+        onSendReaction={(rxId) => {
+          const rx = sendReaction(rxId);
+          if (rx) chat.addReaction(rx, true);
+          return rx;
+        }}
+        onRemoveReaction={chat.removeReaction}
+        muted={chat.muted}
+        myDisplayName={myName}
+        opponentName={opponentName}
+      />
     </div>
   );
 }

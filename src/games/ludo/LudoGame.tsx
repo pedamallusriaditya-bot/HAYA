@@ -35,6 +35,17 @@ import OnlineColorReservation from './OnlineColorReservation';
 import { LudoChooseView, LudoOfflineConfigView } from './LudoSetupViews';
 import LudoActiveBoardView from './LudoActiveBoardView';
 import { getCachedAvatar } from '@/lib/avatarStorage';
+import { useGameChat } from '@/games/shared/useGameChat';
+import GameChat from '@/components/GameChat';
+import GameReactions from '@/components/GameReactions';
+import {
+  createChatRateLimiter,
+  createReactionRateLimiter,
+  handleIncomingChat,
+  handleIncomingReaction,
+  sendBroadcastChat,
+  sendBroadcastReaction,
+} from '@/games/shared/chatHelpers';
 
 type GameMode = 'choose' | 'offline_config' | 'playing' | 'online_reservation' | 'online_playing';
 
@@ -42,6 +53,7 @@ export default function LudoGame() {
   const { profile } = useAuth();
   const { path } = useRouter();
   const { activeMatch, exitActiveMatch, setInMatchStatus, friend } = useMultiplayer();
+  const myName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
 
   const rawName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
   const playerName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
@@ -130,6 +142,44 @@ export default function LudoGame() {
   const setInMatchStatusRef = useRef(setInMatchStatus);
   setInMatchStatusRef.current = setInMatchStatus;
 
+  // In-game ephemeral chat and instant emoji reactions
+  const chat = useGameChat();
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+
+  const chatSeenIdsRef = useRef<Set<string>>(new Set());
+  const reactionSeenIdsRef = useRef<Set<string>>(new Set());
+  const senderChatLimiterRef = useRef(createChatRateLimiter());
+  const receiverChatLimiterRef = useRef(createChatRateLimiter());
+  const senderReactionLimiterRef = useRef(createReactionRateLimiter());
+  const receiverReactionLimiterRef = useRef(createReactionRateLimiter());
+
+  const sendChat = useCallback(
+    (text: string) => {
+      return sendBroadcastChat(
+        matchChannelRef.current,
+        myName,
+        text,
+        senderChatLimiterRef.current,
+        chatSeenIdsRef.current
+      );
+    },
+    [myName]
+  );
+
+  const sendReaction = useCallback(
+    (reactionId: string) => {
+      return sendBroadcastReaction(
+        matchChannelRef.current,
+        myName,
+        reactionId,
+        senderReactionLimiterRef.current,
+        reactionSeenIdsRef.current
+      );
+    },
+    [myName]
+  );
+
   // Broadcast current authoritative snapshot (built from explicit values when provided, or latest committed refs when idle)
   const broadcastSnapshot = useCallback((override?: Partial<LudoSnapshot>) => {
     if (modeRef.current !== 'online_playing' || !matchChannelRef.current) return;
@@ -169,7 +219,6 @@ export default function LudoGame() {
 
   // Online Realtime match channel subscription
   const profileId = profile?.id;
-  const myName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
 
   useEffect(() => {
     if (!matchId) return;
@@ -257,6 +306,28 @@ export default function LudoGame() {
         const oppCol = onlineOpponentColorRef.current;
         if (myCol && oppCol) {
           startOnlineMatchRef.current(myCol, oppCol);
+        }
+      })
+      .on('broadcast', { event: 'chat' }, ({ payload }) => {
+        const msg = handleIncomingChat(
+          payload,
+          myName,
+          chatSeenIdsRef.current,
+          receiverChatLimiterRef.current
+        );
+        if (msg) {
+          chatRef.current.addMessage(msg);
+        }
+      })
+      .on('broadcast', { event: 'reaction' }, ({ payload }) => {
+        const rx = handleIncomingReaction(
+          payload,
+          myName,
+          reactionSeenIdsRef.current,
+          receiverReactionLimiterRef.current
+        );
+        if (rx) {
+          chatRef.current.addReaction(rx);
         }
       })
       .subscribe((status) => {
@@ -703,6 +774,7 @@ export default function LudoGame() {
         onToggleSound={toggleSound}
         onExit={() => {
           if (mode === 'online_playing') {
+            chat.clear();
             exitActiveMatch();
           }
           setMode('choose');
@@ -764,6 +836,38 @@ export default function LudoGame() {
         myAvatar={myAvatar}
         friendAvatar={friend?.avatar}
       />
+
+      {mode === 'online_playing' && (
+        <>
+          <GameChat
+            messages={chat.messages}
+            unread={chat.unread}
+            open={chat.open}
+            setOpen={chat.setOpen}
+            muted={chat.muted}
+            setMuted={chat.setMuted}
+            onSendChat={(text) => {
+              const msg = sendChat(text);
+              if (msg) chat.addMessage(msg, true);
+              return msg;
+            }}
+            myDisplayName={myName}
+            opponentName={activeMatch?.opponentName || friend?.name || 'Opponent'}
+          />
+          <GameReactions
+            floatingReactions={chat.floatingReactions}
+            onSendReaction={(rxId) => {
+              const rx = sendReaction(rxId);
+              if (rx) chat.addReaction(rx, true);
+              return rx;
+            }}
+            onRemoveReaction={chat.removeReaction}
+            muted={chat.muted}
+            myDisplayName={myName}
+            opponentName={activeMatch?.opponentName || friend?.name || 'Opponent'}
+          />
+        </>
+      )}
     </div>
   );
 }

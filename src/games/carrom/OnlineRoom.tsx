@@ -5,6 +5,9 @@ import { useMultiplayer } from '@/context/MultiplayerContext';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import { recordGameResult } from '@/lib/gameRecordsService';
 import { useOnlineMatchChannel } from '@/games/shared/useOnlineMatchChannel';
+import { useGameChat } from '@/games/shared/useGameChat';
+import GameChat from '@/components/GameChat';
+import GameReactions from '@/components/GameReactions';
 import { carromAudio } from './carromAudio';
 import {
   BOARD_SIZE,
@@ -79,6 +82,8 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
 
   // Match stats
   const [stats, setStats] = useState({ me: 0, opponent: 0 });
+
+  const chat = useGameChat();
 
   // Physics simulation references
   const piecesRef = useRef<Piece[]>([]);
@@ -305,10 +310,14 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
     sendState,
     sendRematch,
     sendExit,
+    sendChat,
+    sendReaction,
   } = useOnlineMatchChannel<CarromActionPayload, StateSnapshot>({
     matchId,
     gameId: 'carrom',
     role,
+    onChat: (msg) => chat.addMessage(msg),
+    onReaction: (rx) => chat.addReaction(rx),
     onMove: (action) => {
       if (action.type === 'shot') {
         // Opponent shot!
@@ -353,6 +362,7 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
       setRenderTrigger((r) => r + 1);
     },
     onExit: () => {
+      chat.clear();
       alert(`${opponentName} left the match.`);
       exitActiveMatch();
       onExit();
@@ -600,6 +610,34 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
           </div>
         )}
       </div>
+
+      <GameChat
+        messages={chat.messages}
+        unread={chat.unread}
+        open={chat.open}
+        setOpen={chat.setOpen}
+        muted={chat.muted}
+        setMuted={chat.setMuted}
+        onSendChat={(text) => {
+          const msg = sendChat(text);
+          if (msg) chat.addMessage(msg, true);
+          return msg;
+        }}
+        myDisplayName={myName}
+        opponentName={opponentName}
+      />
+      <GameReactions
+        floatingReactions={chat.floatingReactions}
+        onSendReaction={(rxId) => {
+          const rx = sendReaction(rxId);
+          if (rx) chat.addReaction(rx, true);
+          return rx;
+        }}
+        onRemoveReaction={chat.removeReaction}
+        muted={chat.muted}
+        myDisplayName={myName}
+        opponentName={opponentName}
+      />
     </div>
   );
 }
