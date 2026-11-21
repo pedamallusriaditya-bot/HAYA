@@ -6,7 +6,7 @@ import { useRouter } from '@/router';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import type { AvatarConfig } from '@/types/avatar';
 import { getCachedAvatar } from '@/lib/avatarStorage';
-import { shouldStartHostMatch, createHostMatch } from './multiplayerHelpers';
+import { shouldStartHostMatch, createHostMatch, createGuestMatch } from './multiplayerHelpers';
 
 export type PresenceStatus = 'online' | 'in_match' | 'offline';
 
@@ -38,6 +38,7 @@ type MultiplayerContextType = {
   outgoingInvite: Invitation | null;
   incomingInvite: Invitation | null;
   activeMatch: { matchId: string; gameId: string; role: 'host' | 'guest'; opponentName: string } | null;
+  inviteNotice?: string | null;
   sendInvite: (gameId: string) => void;
   cancelOutgoingInvite: () => void;
   acceptIncomingInvite: () => void;
@@ -135,6 +136,15 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
   const [outgoingInvite, setOutgoingInvite] = useState<Invitation | null>(null);
   const [incomingInvite, setIncomingInvite] = useState<Invitation | null>(null);
   const [activeMatch, setActiveMatch] = useState<{ matchId: string; gameId: string; role: 'host' | 'guest'; opponentName: string } | null>(null);
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!inviteNotice) return;
+    const timer = setTimeout(() => {
+      setInviteNotice(null);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [inviteNotice]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lobbyChannelRef = useRef<any>(null);
@@ -491,38 +501,42 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     setOutgoingInvite(null);
   }, [outgoingInvite]);
 
-  const acceptIncomingInvite = useCallback(async () => {
+  const acceptIncomingInvite = useCallback(() => {
     if (!incomingInvite || !lobbyChannelRef.current) return;
 
     const { id, matchId, gameId, fromName } = incomingInvite;
 
+    // Immediately notify host via broadcast
     void lobbyChannelRef.current.send({
       type: 'broadcast',
       event: 'invite_response',
       payload: { inviteId: id, status: 'accepted', matchId, gameId },
     });
 
-    const { error } = await supabase
-      .from('multiplayer_invitations')
-      .update({ status: 'accepted' })
-      .eq('match_id', matchId);
-
-    if (error) {
-      console.error('[MultiplayerContext] Failed to update invitation to accepted in DB:', error);
-      alert('Unable to record accepted invitation in database. Please check your connection.');
-    }
-
-    setActiveMatch({
-      matchId,
-      gameId,
-      role: 'guest',
-      opponentName: fromName,
-    });
-
+    // Immediately transition into match without blocking on database update
+    setActiveMatch(createGuestMatch(matchId, gameId, fromName));
     setIncomingInvite(null);
     updatePresence('in_match', gameId);
     arcadeAudio.playCoin();
     navigate(`/play/${gameId}?match=${matchId}`);
+
+    // Update database status in the background
+    void Promise.resolve(
+      supabase
+        .from('multiplayer_invitations')
+        .update({ status: 'accepted' })
+        .eq('match_id', matchId)
+    )
+      .then(({ error }) => {
+        if (error) {
+          console.error('[MultiplayerContext] Failed to record accepted invitation in DB:', error);
+          setInviteNotice('Unable to sync invitation status to server. Match will continue via direct peer channel.');
+        }
+      })
+      .catch((err: unknown) => {
+        console.error('[MultiplayerContext] Unexpected error updating invitation in DB:', err);
+        setInviteNotice('Unable to sync invitation status to server. Match will continue via direct peer channel.');
+      });
   }, [incomingInvite, updatePresence, navigate]);
 
   const declineIncomingInvite = useCallback(() => {
@@ -566,6 +580,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         outgoingInvite,
         incomingInvite,
         activeMatch,
+        inviteNotice,
         sendInvite,
         cancelOutgoingInvite,
         acceptIncomingInvite,
@@ -574,6 +589,22 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         exitActiveMatch,
       }}
     >
+      {inviteNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-amber-500/40 bg-slate-950/95 px-4 py-3 text-xs text-amber-200 shadow-xl backdrop-blur flex items-center justify-between gap-3 animate-in"
+        >
+          <span>{inviteNotice}</span>
+          <button
+            onClick={() => setInviteNotice(null)}
+            className="text-slate-400 hover:text-slate-100 text-xs px-1"
+            aria-label="Dismiss notice"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {children}
     </MultiplayerContext.Provider>
   );

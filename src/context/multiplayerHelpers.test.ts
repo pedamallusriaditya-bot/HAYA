@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   shouldStartHostMatch,
   createHostMatch,
+  createGuestMatch,
   isValidIncomingInvite,
 } from './multiplayerHelpers.ts';
 
@@ -40,6 +41,23 @@ describe('Multiplayer Helpers', () => {
 
     it('falls back to Friend if opponentName is empty', () => {
       const match = createHostMatch('match_xyz', 'ludo', '');
+      assert.equal(match.opponentName, 'Friend');
+    });
+  });
+
+  describe('createGuestMatch', () => {
+    it('creates active match descriptor with guest role', () => {
+      const match = createGuestMatch('match_guest_1', 'chess', 'Aditya');
+      assert.deepEqual(match, {
+        matchId: 'match_guest_1',
+        gameId: 'chess',
+        role: 'guest',
+        opponentName: 'Aditya',
+      });
+    });
+
+    it('falls back to Friend if opponentName is empty', () => {
+      const match = createGuestMatch('match_guest_2', 'connect4', '');
       assert.equal(match.opponentName, 'Friend');
     });
   });

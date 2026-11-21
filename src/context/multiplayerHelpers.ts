@@ -34,6 +34,22 @@ export function createHostMatch(
 }
 
 /**
+ * Creates an ActiveMatch descriptor with guest role.
+ */
+export function createGuestMatch(
+  matchId: string,
+  gameId: string,
+  opponentName: string
+): ActiveMatch {
+  return {
+    matchId,
+    gameId,
+    role: 'guest',
+    opponentName: opponentName || 'Friend',
+  };
+}
+
+/**
  * Validates whether an incoming invitation is directed to the current user
  * and has not yet expired.
  */
