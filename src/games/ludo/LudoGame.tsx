@@ -29,7 +29,6 @@ import {
   type LudoRollMessage,
   type LudoMoveMessage,
   type LudoTurnMessage,
-  createLudoSnapshot,
 } from './engine';
 import { getLudoBotMove } from './ai';
 import OnlineColorReservation from './OnlineColorReservation';

@@ -9,6 +9,16 @@ import {
   hasSeqGap,
   shouldAdoptStateSnapshot,
 } from './onlineMatchHelpers';
+import {
+  type ChatMessage,
+  type ReactionMessage,
+  createChatRateLimiter,
+  createReactionRateLimiter,
+  handleIncomingChat,
+  handleIncomingReaction,
+  sendBroadcastChat,
+  sendBroadcastReaction,
+} from './chatHelpers';
 
 export type UseOnlineMatchChannelOptions<
   TMove extends Record<string, unknown> = Record<string, unknown>,
@@ -23,6 +33,8 @@ export type UseOnlineMatchChannelOptions<
   onRematch?: (payload?: unknown) => void;
   onExit?: () => void;
   onOpponentJoined?: () => void;
+  onChat?: (msg: ChatMessage) => void;
+  onReaction?: (reaction: ReactionMessage) => void;
   getCurrentState?: () => TState | null | undefined;
 };
 
@@ -39,6 +51,8 @@ export type UseOnlineMatchChannelReturn<
   requestState: () => void;
   sendRematch: (payload?: unknown) => void;
   sendExit: () => void;
+  sendChat: (text: string) => ChatMessage | null;
+  sendReaction: (reactionId: string) => ReactionMessage | null;
   seqRef: React.MutableRefObject<number>;
   lastAppliedSeqRef: React.MutableRefObject<number>;
 };
@@ -59,6 +73,8 @@ export function useOnlineMatchChannel<
     onRematch,
     onExit,
     onOpponentJoined,
+    onChat,
+    onReaction,
     getCurrentState,
   } = options;
   const { profile } = useAuth();
@@ -90,6 +106,20 @@ export function useOnlineMatchChannel<
 
   const onOpponentJoinedRef = useRef(onOpponentJoined);
   onOpponentJoinedRef.current = onOpponentJoined;
+
+  const onChatRef = useRef(onChat);
+  onChatRef.current = onChat;
+
+  const onReactionRef = useRef(onReaction);
+  onReactionRef.current = onReaction;
+
+  const chatSeenIdsRef = useRef<Set<string>>(new Set());
+  const reactionSeenIdsRef = useRef<Set<string>>(new Set());
+
+  const senderChatLimiterRef = useRef(createChatRateLimiter());
+  const receiverChatLimiterRef = useRef(createChatRateLimiter());
+  const senderReactionLimiterRef = useRef(createReactionRateLimiter());
+  const receiverReactionLimiterRef = useRef(createReactionRateLimiter());
 
   const getCurrentStateRef = useRef(getCurrentState);
   getCurrentStateRef.current = getCurrentState;
@@ -148,6 +178,32 @@ export function useOnlineMatchChannel<
       payload: {},
     });
   }, []);
+
+  const sendChat = useCallback(
+    (text: string): ChatMessage | null => {
+      return sendBroadcastChat(
+        channelRef.current,
+        myName,
+        text,
+        senderChatLimiterRef.current,
+        chatSeenIdsRef.current
+      );
+    },
+    [myName]
+  );
+
+  const sendReaction = useCallback(
+    (reactionId: string): ReactionMessage | null => {
+      return sendBroadcastReaction(
+        channelRef.current,
+        myName,
+        reactionId,
+        senderReactionLimiterRef.current,
+        reactionSeenIdsRef.current
+      );
+    },
+    [myName]
+  );
 
   useEffect(() => {
     if (!matchId) return;
@@ -220,6 +276,28 @@ export function useOnlineMatchChannel<
       .on('broadcast', { event: 'match_exit' }, () => {
         onExitRef.current?.();
       })
+      .on('broadcast', { event: 'chat' }, ({ payload }) => {
+        const msg = handleIncomingChat(
+          payload,
+          myName,
+          chatSeenIdsRef.current,
+          receiverChatLimiterRef.current
+        );
+        if (msg) {
+          onChatRef.current?.(msg);
+        }
+      })
+      .on('broadcast', { event: 'reaction' }, ({ payload }) => {
+        const rx = handleIncomingReaction(
+          payload,
+          myName,
+          reactionSeenIdsRef.current,
+          receiverReactionLimiterRef.current
+        );
+        if (rx) {
+          onReactionRef.current?.(rx);
+        }
+      })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           void ch.track({ joined_at: Date.now() });
@@ -250,6 +328,8 @@ export function useOnlineMatchChannel<
     requestState,
     sendRematch,
     sendExit,
+    sendChat,
+    sendReaction,
     seqRef,
     lastAppliedSeqRef,
   };
