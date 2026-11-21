@@ -374,9 +374,9 @@ test('Online Turn Flow: Extra turn keeps the turn and does not advance', () => {
   const { players, startingTurn } = createOnlineMatchPlayers('red', 'green', 'Friend');
   assert.equal(startingTurn, 'red');
 
-  const rollerTurn: LudoColor = startingTurn;
+  let rollerTurn: LudoColor = startingTurn;
   let rollerSeq = 0;
-  const receiverTurn: LudoColor = startingTurn;
+  let receiverTurn: LudoColor = startingTurn;
   let receiverLastAppliedSeq = 0;
 
   // 1. Red rolls 6 (can release token from yard)

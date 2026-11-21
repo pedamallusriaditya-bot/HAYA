@@ -134,15 +134,15 @@ export default function LudoGame() {
   // Broadcast current authoritative snapshot (built from explicit values when provided, or latest committed refs when idle)
   const broadcastSnapshot = useCallback((override?: Partial<LudoSnapshot>) => {
     if (modeRef.current !== 'online_playing' || !matchChannelRef.current) return;
-    const snapshot = createLudoSnapshot(
-      override?.seq ?? seqRef.current,
-      override?.currentTurn ?? currentTurnRef.current,
-      override?.activeRoll !== undefined ? override.activeRoll : activeRollRef.current,
-      override?.extraTurn ?? extraTurnRef.current,
-      override?.players ?? playersRef.current,
-      override?.diceRolls ?? diceRollsRef.current,
-      override?.winner !== undefined ? override.winner : winnerRef.current
-    );
+    const snapshot: LudoSnapshot = {
+      seq: override?.seq ?? seqRef.current,
+      currentTurn: override?.currentTurn ?? currentTurnRef.current,
+      activeRoll: override?.activeRoll !== undefined ? override.activeRoll : activeRollRef.current,
+      extraTurn: override?.extraTurn ?? extraTurnRef.current,
+      players: override?.players ?? playersRef.current,
+      diceRolls: override?.diceRolls ?? diceRollsRef.current,
+      winner: override?.winner !== undefined ? override.winner : winnerRef.current,
+    };
     void matchChannelRef.current.send({
       type: 'broadcast',
       event: 'ludo_state',
