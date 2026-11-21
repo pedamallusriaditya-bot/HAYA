@@ -6,6 +6,7 @@ import { useRouter } from '@/router';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import type { AvatarConfig } from '@/types/avatar';
 import { getCachedAvatar } from '@/lib/avatarStorage';
+import { getGame } from '@/games/registry';
 import { shouldStartHostMatch, createHostMatch, createGuestMatch } from './multiplayerHelpers';
 
 export type PresenceStatus = 'online' | 'in_match' | 'offline';
@@ -278,6 +279,20 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         const invite = payload as Invitation;
         // Verify this invitation is meant for me
         if (invite.toEmail?.toLowerCase() === myEmail.toLowerCase()) {
+          const targetGame = getGame(invite.gameId);
+          if (!targetGame || !targetGame.online) {
+            void ch.send({
+              type: 'broadcast',
+              event: 'invite_response',
+              payload: { inviteId: invite.id, status: 'declined', reason: 'game_offline' },
+            });
+            void supabase
+              .from('multiplayer_invitations')
+              .update({ status: 'declined' })
+              .eq('match_id', invite.matchId);
+            return;
+          }
+
           // If already in a match, auto-decline
           if (isMatchRef.current) {
             ch.send({
@@ -372,6 +387,15 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
           // Incoming invitation for me
           if (toMe) {
             if (row.status === 'pending') {
+              const targetGame = getGame(row.game_id);
+              if (!targetGame || !targetGame.online) {
+                void supabase
+                  .from('multiplayer_invitations')
+                  .update({ status: 'declined' })
+                  .eq('match_id', row.match_id);
+                return;
+              }
+
               const expiresMs = new Date(row.expires_at).getTime();
               if (Date.now() < expiresMs && !isMatchRef.current) {
                 setIncomingInvite({
@@ -432,6 +456,8 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
   const sendInvite = useCallback((gameId: string) => {
     if (!friend.email) return;
     if (!lobbyChannelRef.current || friend.status === 'offline') return;
+    const targetGame = getGame(gameId);
+    if (!targetGame || !targetGame.online) return;
 
     const matchId = `match_${gameId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const inviteId =

@@ -32,6 +32,7 @@ export type GameMeta = {
   description: string;
   mode: 'single' | 'multi';
   status: 'playable' | 'soon';
+  online: boolean;
   icon: LucideIcon;
   gradient: string;
   rules: string[];
@@ -45,6 +46,7 @@ export const GAMES: GameMeta[] = [
     description: 'Place digits 1-9 so every row, column and 3x3 box contains each number exactly once.',
     mode: 'single',
     status: 'playable',
+    online: false,
     icon: Grid3x3,
     gradient: 'from-sky-500/30 to-cyan-500/10',
     rules: [
@@ -61,6 +63,7 @@ export const GAMES: GameMeta[] = [
     description: 'Reveal cells, use the numbers to deduce mine locations, and flag every mine to win.',
     mode: 'single',
     status: 'playable',
+    online: false,
     icon: Bomb,
     gradient: 'from-rose-500/30 to-orange-500/10',
     rules: [
@@ -77,6 +80,7 @@ export const GAMES: GameMeta[] = [
     description: 'Combine equal tiles to build the 2048 tile. Keep going for an even higher score.',
     mode: 'single',
     status: 'playable',
+    online: false,
     icon: Grid3x3,
     gradient: 'from-amber-500/30 to-yellow-500/10',
     rules: [
@@ -93,6 +97,7 @@ export const GAMES: GameMeta[] = [
     description: 'Navigate a procedurally generated maze from start to finish. Smaller is faster.',
     mode: 'single',
     status: 'playable',
+    online: false,
     icon: Crosshair,
     gradient: 'from-emerald-500/30 to-teal-500/10',
     rules: [
@@ -109,6 +114,7 @@ export const GAMES: GameMeta[] = [
     description: 'Flip cards two at a time to find matching pairs. Clear the board in as few moves as possible.',
     mode: 'single',
     status: 'playable',
+    online: false,
     icon: MemoryStick,
     gradient: 'from-fuchsia-500/30 to-pink-500/10',
     rules: [
@@ -125,6 +131,7 @@ export const GAMES: GameMeta[] = [
     description: 'The classic 3x3 game. Play a friend online or challenge the unbeatable bot.',
     mode: 'multi',
     status: 'playable',
+    online: true,
     icon: Hash,
     gradient: 'from-sky-500/30 to-indigo-500/10',
     rules: ['Take turns placing X and O.', 'First with three in a row wins.'],
@@ -136,6 +143,7 @@ export const GAMES: GameMeta[] = [
     description: 'Drop pieces into a 7x6 grid. Connect four in a row - horizontal, vertical or diagonal.',
     mode: 'multi',
     status: 'playable',
+    online: false,
     icon: Columns3,
     gradient: 'from-rose-500/30 to-amber-500/10',
     rules: ['Drop a piece in any column.', 'Pieces fall to the lowest empty slot.', 'Connect 4 in any direction to win.'],
@@ -147,6 +155,7 @@ export const GAMES: GameMeta[] = [
     description: 'Full legal-move chess with check, checkmate, castling and promotion.',
     mode: 'multi',
     status: 'playable',
+    online: false,
     icon: Crown,
     gradient: 'from-slate-400/30 to-slate-600/10',
     rules: ['Standard chess rules apply.', 'Includes castling, en passant and promotion.'],
@@ -158,6 +167,7 @@ export const GAMES: GameMeta[] = [
     description: 'Race your tokens around the board and home. Capture opponents on your way.',
     mode: 'multi',
     status: 'playable',
+    online: true,
     icon: Dices,
     gradient: 'from-emerald-500/30 to-lime-500/10',
     rules: ['Roll a 6 to release a token.', 'Land on an opponent to send them home.', 'Get all tokens home to win.'],
@@ -169,6 +179,7 @@ export const GAMES: GameMeta[] = [
     description: 'Aim, power up and pocket your pieces in this classic tabletop game with smooth physics and 7 bot levels.',
     mode: 'multi',
     status: 'playable',
+    online: false,
     icon: Disc,
     gradient: 'from-amber-500/30 to-orange-500/10',
     rules: [
@@ -185,6 +196,7 @@ export const GAMES: GameMeta[] = [
     description: 'Roll the dice and race to square 100. Ladders lift you up, snakes send you down.',
     mode: 'multi',
     status: 'playable',
+    online: false,
     icon: Stars,
     gradient: 'from-teal-500/30 to-green-500/10',
     rules: ['Roll the dice on your turn.', 'Ladders boost you up; snakes slide you down.', 'First to square 100 wins.'],

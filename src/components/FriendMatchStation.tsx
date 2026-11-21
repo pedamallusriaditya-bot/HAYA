@@ -120,7 +120,15 @@ export default function FriendMatchStation({
 
           {/* Action Area */}
           <div>
-            {isPendingForThisGame ? (
+            {!game?.online ? (
+              <button
+                type="button"
+                disabled
+                className="btn-arcade-teal w-full py-3 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 opacity-50 cursor-not-allowed border border-slate-700 bg-slate-900/80 text-slate-400"
+              >
+                <span>Online play coming soon - play the bot</span>
+              </button>
+            ) : isPendingForThisGame ? (
               <div className="space-y-3">
                 <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-center justify-between">
                   <span className="flex items-center gap-2">

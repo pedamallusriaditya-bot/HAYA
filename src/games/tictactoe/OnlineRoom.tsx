@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { RotateCcw, ArrowLeft, Loader2, Wifi, WifiOff, Sparkles } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/auth/AuthContext';
 import { useMultiplayer } from '@/context/MultiplayerContext';
 import { createEmptyBoard, checkWinner, type Board, type Player } from './engine';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import { recordGameResult } from '@/lib/gameRecordsService';
+import { useOnlineMatchChannel } from '@/games/shared/useOnlineMatchChannel';
 
 type OnlineMatchProps = {
   matchId: string;
@@ -16,11 +16,8 @@ type OnlineMatchProps = {
 
 export default function OnlineRoom({ matchId, role, opponentName, onExit }: OnlineMatchProps) {
   const { profile } = useAuth();
-  const { exitActiveMatch, setInMatchStatus } = useMultiplayer();
-
-  const [connecting, setConnecting] = useState<boolean>(true);
-  const [opponentConnected, setOpponentConnected] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  const { exitActiveMatch } = useMultiplayer();
+  const myName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
 
   // Match State
   const mySymbol: Player = role === 'host' ? 'X' : 'O';
@@ -33,101 +30,82 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
   const [score, setScore] = useState({ me: 0, opponent: 0, draws: 0 });
   const roundRef = useRef(1);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const channelRef = useRef<any>(null);
-  const myName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
+  const {
+    connecting,
+    opponentConnected,
+    error,
+    channel,
+    sendMove,
+    sendRematch,
+    sendExit,
+  } = useOnlineMatchChannel<{ index: number; symbol: Player }>({
+    matchId,
+    gameId: 'tictactoe',
+    role,
+    onMove: (payload) => {
+      const { index, symbol } = payload;
+      setBoard((prev) => {
+        if (prev[index] !== null) return prev; // Ignore invalid
+        const next = [...prev];
+        next[index] = symbol;
 
-  useEffect(() => {
-    setInMatchStatus(true, 'tictactoe');
-    const ch = supabase.channel(`haya-match-${matchId}`, {
-      config: {
-        private: true,
-        presence: { key: myName },
-      },
-    });
-
-    channelRef.current = ch;
-
-    ch.on('presence', { event: 'sync' }, () => {
-      const state = ch.presenceState();
-      const userNames = Object.keys(state);
-      const isOpponentHere = userNames.some((u) => u !== myName);
-      setOpponentConnected(isOpponentHere);
-    })
-      .on('broadcast', { event: 'move' }, ({ payload }) => {
-        const { index, symbol } = payload;
-        setBoard((prev) => {
-          if (prev[index] !== null) return prev; // Ignore invalid
-          const next = [...prev];
-          next[index] = symbol;
-
-          const result = checkWinner(next);
-          if (result.winner) {
-            setWinner(result.winner);
-            setWinningLine(result.winningLine);
-            if (result.winner === 'draw') {
-              setScore((s) => ({ ...s, draws: s.draws + 1 }));
-              arcadeAudio.playDraw();
-            } else if (result.winner === mySymbol) {
-              setScore((s) => ({ ...s, me: s.me + 1 }));
-              arcadeAudio.playWin();
-            } else {
-              setScore((s) => ({ ...s, opponent: s.opponent + 1 }));
-              arcadeAudio.playDraw();
-            }
-
-            if (profile?.id) {
-              void recordGameResult({
-                user_id: profile.id,
-                game: 'tictactoe',
-                mode: 'multi',
-                result: result.winner === 'draw' ? 'draw' : result.winner === mySymbol ? 'win' : 'loss',
-                score: result.winner === mySymbol ? 1 : 0,
-                opponent_type: 'human',
-                opponent_name: opponentName,
-                match_id: `${matchId}_rnd_${roundRef.current}`,
-              });
-            }
+        const result = checkWinner(next);
+        if (result.winner) {
+          setWinner(result.winner);
+          setWinningLine(result.winningLine);
+          if (result.winner === 'draw') {
+            setScore((s) => ({ ...s, draws: s.draws + 1 }));
+            arcadeAudio.playDraw();
+          } else if (result.winner === mySymbol) {
+            setScore((s) => ({ ...s, me: s.me + 1 }));
+            arcadeAudio.playWin();
+          } else {
+            setScore((s) => ({ ...s, opponent: s.opponent + 1 }));
+            arcadeAudio.playDraw();
           }
-          return next;
-        });
 
-        setCurrentTurn(symbol === 'X' ? 'O' : 'X');
-        arcadeAudio.playMove(symbol === 'X');
-      })
-      .on('broadcast', { event: 'rematch' }, () => {
-        roundRef.current += 1;
-        setBoard(createEmptyBoard());
-        setWinner(null);
-        setWinningLine(null);
-        setCurrentTurn('X');
-        arcadeAudio.playCoin();
-      })
-      .on('broadcast', { event: 'match_exit' }, () => {
-        alert(`${opponentName} left the match.`);
-        exitActiveMatch();
-        onExit();
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          void ch.track({ joined_at: Date.now() });
-          setConnecting(false);
-          arcadeAudio.playCoin();
-        } else if (status === 'CHANNEL_ERROR') {
-          setConnecting(false);
-          setError('Failed to establish match connection.');
+          if (profile?.id) {
+            void recordGameResult({
+              user_id: profile.id,
+              game: 'tictactoe',
+              mode: 'multi',
+              result: result.winner === 'draw' ? 'draw' : result.winner === mySymbol ? 'win' : 'loss',
+              score: result.winner === mySymbol ? 1 : 0,
+              opponent_type: 'human',
+              opponent_name: opponentName,
+              match_id: `${matchId}_rnd_${roundRef.current}`,
+            });
+          }
         }
+        return next;
       });
 
-    return () => {
-      setInMatchStatus(false);
-      void ch.unsubscribe();
-      channelRef.current = null;
-    };
-  }, [matchId, myName, mySymbol, opponentName, onExit, exitActiveMatch, setInMatchStatus, profile?.id]);
+      setCurrentTurn(symbol === 'X' ? 'O' : 'X');
+      arcadeAudio.playMove(symbol === 'X');
+    },
+    onRematch: () => {
+      roundRef.current += 1;
+      setBoard(createEmptyBoard());
+      setWinner(null);
+      setWinningLine(null);
+      setCurrentTurn('X');
+      arcadeAudio.playCoin();
+    },
+    onExit: () => {
+      alert(`${opponentName} left the match.`);
+      exitActiveMatch();
+      onExit();
+    },
+    getCurrentState: () => ({
+      board,
+      currentTurn,
+      winner,
+      winningLine,
+    }),
+  });
 
   const handleCellClick = (index: number) => {
-    if (!channelRef.current || winner || board[index] !== null || currentTurn !== mySymbol) return;
+    if (!channel || winner || board[index] !== null || currentTurn !== mySymbol) return;
 
     const next = [...board];
     next[index] = mySymbol;
@@ -135,12 +113,7 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
     setCurrentTurn(opponentSymbol);
     arcadeAudio.playMove(mySymbol === 'X');
 
-    // Broadcast move to opponent
-    void channelRef.current.send({
-      type: 'broadcast',
-      event: 'move',
-      payload: { index, symbol: mySymbol },
-    });
+    sendMove({ index, symbol: mySymbol });
 
     const result = checkWinner(next);
     if (result.winner) {
@@ -172,31 +145,21 @@ export default function OnlineRoom({ matchId, role, opponentName, onExit }: Onli
   };
 
   const requestRematch = () => {
-    if (!channelRef.current) return;
+    if (!channel) return;
     roundRef.current += 1;
     setBoard(createEmptyBoard());
     setWinner(null);
     setWinningLine(null);
     setCurrentTurn('X');
-    void channelRef.current.send({
-      type: 'broadcast',
-      event: 'rematch',
-      payload: {},
-    });
+    sendRematch();
     arcadeAudio.playCoin();
   };
 
   const handleLeaveMatch = useCallback(() => {
-    if (channelRef.current) {
-      void channelRef.current.send({
-        type: 'broadcast',
-        event: 'match_exit',
-        payload: {},
-      });
-    }
+    sendExit();
     exitActiveMatch();
     onExit();
-  }, [exitActiveMatch, onExit]);
+  }, [sendExit, exitActiveMatch, onExit]);
 
   if (connecting) {
     return (
