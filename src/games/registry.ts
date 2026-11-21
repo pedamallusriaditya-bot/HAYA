@@ -196,7 +196,7 @@ export const GAMES: GameMeta[] = [
     description: 'Roll the dice and race to square 100. Ladders lift you up, snakes send you down.',
     mode: 'multi',
     status: 'playable',
-    online: false,
+    online: true,
     icon: Stars,
     gradient: 'from-teal-500/30 to-green-500/10',
     rules: ['Roll the dice on your turn.', 'Ladders boost you up; snakes slide you down.', 'First to square 100 wins.'],

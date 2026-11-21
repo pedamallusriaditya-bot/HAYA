@@ -14,6 +14,10 @@ type SnakesBoardProps = {
   botColor?: string;
   lastJump?: { from: number; to: number; type: 'ladder' | 'snake' } | null;
   activeTurn?: 'player' | 'bot';
+  playerLabel?: string;
+  botLabel?: string;
+  p1Tag?: string;
+  p2Tag?: string;
 };
 
 export default function SnakesBoard({
@@ -21,6 +25,10 @@ export default function SnakesBoard({
   botSquare,
   lastJump,
   activeTurn,
+  playerLabel = 'P1',
+  botLabel = 'CPU',
+  p1Tag = 'Player at Starting Gate',
+  p2Tag = 'Bot at Starting Gate',
 }: SnakesBoardProps) {
 
   // Compute SVG overlay lines for Ladders and Snakes
@@ -293,7 +301,7 @@ export default function SnakesBoard({
                 activeTurn === 'player' ? 'ring-2 sm:ring-4 ring-sky-400/60 animate-bounce' : ''
               }`}
             >
-              P1
+              {playerLabel}
             </div>
           </div>
         )}
@@ -313,7 +321,7 @@ export default function SnakesBoard({
                 activeTurn === 'bot' ? 'ring-2 sm:ring-4 ring-rose-400/60 animate-bounce' : ''
               }`}
             >
-              CPU
+              {botLabel}
             </div>
           </div>
         )}
@@ -324,11 +332,11 @@ export default function SnakesBoard({
         <div className="mt-2 sm:mt-3 flex flex-wrap items-center justify-center gap-2 xs:gap-4 text-[10px] xs:text-xs font-mono text-slate-400 bg-slate-900/60 py-1.5 sm:py-2 px-3 sm:px-4 rounded-xl border border-slate-800">
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-sky-500" />
-            Player at Starting Gate
+            {p1Tag}
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-rose-500" />
-            Bot at Starting Gate
+            {p2Tag}
           </span>
         </div>
       )}

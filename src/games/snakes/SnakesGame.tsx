@@ -3,6 +3,7 @@ import { TrendingUp } from 'lucide-react';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import { useHighScore } from '@/lib/useHighScore';
 import { useGameRecorder } from '@/lib/useGameRecorder';
+import { useMultiplayer } from '@/context/MultiplayerContext';
 import FriendMatchStation from '@/components/FriendMatchStation';
 import ArcadeDifficultySlider from '@/components/common/ArcadeDifficultySlider';
 import BotMatchHeader from '@/components/bot/BotMatchHeader';
@@ -11,10 +12,12 @@ import DiceWidget from '@/games/ludo/DiceWidget';
 import SnakesBoard from './SnakesBoard';
 import { calculateMove } from './engine';
 import { getBotRoll, generateTelemetry, type BotTelemetry } from './ai';
+import OnlineRoom from './OnlineRoom';
 
 type GameMode = 'choose' | 'bot';
 
 export default function SnakesGame() {
+  const { activeMatch, exitActiveMatch } = useMultiplayer();
   const [mode, setMode] = useState<GameMode>('choose');
   const [selectedLevel, setSelectedLevel] = useState<number>(3); // Default Normal Level 3
 
@@ -233,6 +236,21 @@ export default function SnakesGame() {
     const next = arcadeAudio.toggleSound();
     setSoundOn(next);
   };
+
+  // Active online match handling
+  if (activeMatch && activeMatch.gameId === 'snakes') {
+    return (
+      <OnlineRoom
+        matchId={activeMatch.matchId}
+        role={activeMatch.role}
+        opponentName={activeMatch.opponentName}
+        onExit={() => {
+          exitActiveMatch();
+          setMode('choose');
+        }}
+      />
+    );
+  }
 
   // Pre-game selection station
   if (mode === 'choose') {
