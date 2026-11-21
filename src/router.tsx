@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 
 type RouterCtx = {
   path: string;
@@ -22,13 +22,16 @@ export function RouterProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const navigate = (to: string) => {
+  const navigate = useCallback((to: string) => {
     window.location.hash = to;
-  };
+  }, []);
 
-  return <Ctx.Provider value={{ path, navigate }}>{children}</Ctx.Provider>;
+  const value = useMemo(() => ({ path, navigate }), [path, navigate]);
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useRouter() {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error('useRouter must be used inside <RouterProvider>');

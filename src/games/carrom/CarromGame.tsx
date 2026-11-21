@@ -81,8 +81,8 @@ export default function CarromGame() {
   const [, setRenderTrigger] = useState(0);
   const pocketedThisShotRef = useRef<Piece[]>([]);
   const animFrameIdRef = useRef<number | null>(null);
-  const shotTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const botTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const shotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Current difficulty tier
   const currentTier: DifficultyTier =

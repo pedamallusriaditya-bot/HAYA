@@ -6,6 +6,7 @@ import { useRouter } from '@/router';
 import { arcadeAudio } from '@/lib/arcadeAudio';
 import type { AvatarConfig } from '@/types/avatar';
 import { getCachedAvatar } from '@/lib/avatarStorage';
+import { shouldStartHostMatch, createHostMatch } from './multiplayerHelpers';
 
 export type PresenceStatus = 'online' | 'in_match' | 'offline';
 
@@ -51,6 +52,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
   const { user, profile } = useAuth();
   const { navigate } = useRouter();
 
+  const userId = user?.id;
   const myEmail = user?.email?.toLowerCase().trim() || '';
   const myDisplayName =
     profile?.display_name ||
@@ -139,6 +141,19 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
   const currentGameRef = useRef<string | null>(null);
   const isMatchRef = useRef<boolean>(false);
 
+  // Keep latest mutable values in refs to avoid recreating channels on render
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
+  const friendRef = useRef(friend);
+  friendRef.current = friend;
+
+  const outgoingInviteRef = useRef(outgoingInvite);
+  outgoingInviteRef.current = outgoingInvite;
+
+  const activeMatchRef = useRef(activeMatch);
+  activeMatchRef.current = activeMatch;
+
   // Expiry timer for invitations (45 seconds)
   useEffect(() => {
     if (!outgoingInvite && !incomingInvite) return;
@@ -174,14 +189,34 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     });
   }, [user, myEmail, myDisplayName]);
 
+  const updatePresenceRef = useRef(updatePresence);
+  updatePresenceRef.current = updatePresence;
+
+  // Idempotent host match launcher used by both broadcast and database change paths
+  const startHostMatch = useCallback((matchId: string, gameId: string, opponentName?: string) => {
+    if (!shouldStartHostMatch(activeMatchRef.current?.matchId, matchId)) {
+      return;
+    }
+    const resolvedOpponent = opponentName || friendRef.current.name || 'Friend';
+    setOutgoingInvite(null);
+    setActiveMatch(createHostMatch(matchId, gameId, resolvedOpponent));
+    updatePresenceRef.current('in_match', gameId);
+    arcadeAudio.playWin();
+    navigateRef.current(`/play/${gameId}?match=${matchId}`);
+  }, []);
+
   // Subscribe to Global Lobby Presence and Broadcast
   useEffect(() => {
-    if (!user || !myEmail) return;
+    if (!userId || !myEmail) return;
+
+    if (import.meta.env.DEV) {
+      console.debug('[MultiplayerContext] Creating lobby channel (haya-global-lobby) for user:', userId);
+    }
 
     const ch = supabase.channel('haya-global-lobby', {
       config: {
         private: true,
-        presence: { key: user.id },
+        presence: { key: userId },
       },
     });
 
@@ -201,8 +236,8 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (presences as any[]).forEach((p) => {
           const isFriend =
-            (p.userId && p.userId !== user.id) ||
-            (p.displayName && p.displayName.toLowerCase() === friend.name.toLowerCase());
+            (p.userId && p.userId !== userId) ||
+            (p.displayName && p.displayName.toLowerCase() === friendRef.current.name.toLowerCase());
           if (isFriend) {
             friendOnline = true;
             friendStatus = p.status || 'online';
@@ -220,11 +255,11 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         status: friendOnline ? friendStatus : 'offline',
         currentGame: friendOnline ? friendGame : null,
         lastSeen: friendOnline ? lastTimestamp : prev.lastSeen,
-        avatar: friendAvatar || prev.avatar || getCachedAvatar(friend.email, friend.name),
+        avatar: friendAvatar || prev.avatar || getCachedAvatar(friendRef.current.email, friendRef.current.name),
       }));
     })
       .on('presence', { event: 'leave' }, ({ key }) => {
-        if (key !== user.id) {
+        if (key !== userId) {
           setFriend((prev) => ({ ...prev, status: 'offline', currentGame: null }));
         }
       })
@@ -249,32 +284,19 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       })
       .on('broadcast', { event: 'invite_response' }, ({ payload }) => {
         const { inviteId, status, matchId, gameId } = payload;
+        const currentOutgoing = outgoingInviteRef.current;
 
-        setOutgoingInvite((current) => {
-          if (current && current.id === inviteId) {
-            if (status === 'accepted') {
-              arcadeAudio.playWin();
-              setActiveMatch({
-                matchId,
-                gameId,
-                role: 'host',
-                opponentName: friend.name,
-              });
-              // Update presence to in_match
-              updatePresence('in_match', gameId);
-              // Navigate to match route
-              navigate(`/play/${gameId}?match=${matchId}`);
-              return null;
-            } else if (status === 'declined') {
-              arcadeAudio.playDraw();
-              alert(`${friend.name} is unable to play right now.`);
-              return null;
-            } else if (status === 'cancelled') {
-              return null;
-            }
+        if (currentOutgoing && currentOutgoing.id === inviteId) {
+          if (status === 'accepted') {
+            startHostMatch(matchId || currentOutgoing.matchId, gameId || currentOutgoing.gameId, friendRef.current.name);
+          } else if (status === 'declined') {
+            setOutgoingInvite(null);
+            arcadeAudio.playDraw();
+            alert(`${friendRef.current.name} is unable to play right now.`);
+          } else if (status === 'cancelled') {
+            setOutgoingInvite(null);
           }
-          return current;
-        });
+        }
 
         // If incoming invite was cancelled by sender
         setIncomingInvite((current) => {
@@ -285,28 +307,38 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
         });
       })
       .subscribe((status) => {
+        if (import.meta.env.DEV) {
+          console.debug('[MultiplayerContext] Subscribed to lobby channel (haya-global-lobby), status:', status);
+        }
         if (status === 'SUBSCRIBED') {
-          updatePresence('online', null);
+          updatePresenceRef.current(isMatchRef.current ? 'in_match' : 'online', currentGameRef.current);
         }
       });
 
     const handleAvatarUpdate = () => {
       if (lobbyChannelRef.current) {
-        updatePresence(isMatchRef.current ? 'in_match' : 'online', currentGameRef.current);
+        updatePresenceRef.current(isMatchRef.current ? 'in_match' : 'online', currentGameRef.current);
       }
     };
     window.addEventListener('haya_avatar_updated', handleAvatarUpdate);
 
     return () => {
+      if (import.meta.env.DEV) {
+        console.debug('[MultiplayerContext] Unsubscribing lobby channel (haya-global-lobby)');
+      }
       window.removeEventListener('haya_avatar_updated', handleAvatarUpdate);
       void ch.unsubscribe();
       lobbyChannelRef.current = null;
     };
-  }, [user, myEmail, friend.email, friend.name, updatePresence, navigate]);
+  }, [userId, myEmail, startHostMatch]);
 
   // Subscribe to Postgres Realtime changes on multiplayer_invitations table
   useEffect(() => {
-    if (!user || !myEmail) return;
+    if (!userId || !myEmail) return;
+
+    if (import.meta.env.DEV) {
+      console.debug('[MultiplayerContext] Creating invitations DB channel (haya-invitations-db) for user:', userId);
+    }
 
     const channel = supabase
       .channel('haya-invitations-db', {
@@ -359,16 +391,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
           // Outgoing invitation from me
           if (fromMe) {
             if (row.status === 'accepted') {
-              arcadeAudio.playWin();
-              setActiveMatch({
-                matchId: row.match_id,
-                gameId: row.game_id,
-                role: 'host',
-                opponentName: friend.name,
-              });
-              setOutgoingInvite(null);
-              updatePresence('in_match', row.game_id);
-              navigate(`/play/${row.game_id}?match=${row.match_id}`);
+              startHostMatch(row.match_id, row.game_id, friendRef.current.name);
             } else if (
               row.status === 'declined' ||
               row.status === 'cancelled' ||
@@ -381,15 +404,23 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (import.meta.env.DEV) {
+          console.debug('[MultiplayerContext] Subscribed to invitations DB channel (haya-invitations-db), status:', status);
+        }
+      });
 
     return () => {
+      if (import.meta.env.DEV) {
+        console.debug('[MultiplayerContext] Unsubscribing invitations DB channel (haya-invitations-db)');
+      }
       void channel.unsubscribe();
     };
-  }, [user, myEmail, friend.name, updatePresence, navigate]);
+  }, [userId, myEmail, startHostMatch]);
 
   // Actions
   const sendInvite = useCallback((gameId: string) => {
+    if (!friend.email) return;
     if (!lobbyChannelRef.current || friend.status === 'offline') return;
 
     const matchId = `match_${gameId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -460,10 +491,10 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
     setOutgoingInvite(null);
   }, [outgoingInvite]);
 
-  const acceptIncomingInvite = useCallback(() => {
+  const acceptIncomingInvite = useCallback(async () => {
     if (!incomingInvite || !lobbyChannelRef.current) return;
 
-    const { id, matchId, gameId } = incomingInvite;
+    const { id, matchId, gameId, fromName } = incomingInvite;
 
     void lobbyChannelRef.current.send({
       type: 'broadcast',
@@ -471,16 +502,21 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
       payload: { inviteId: id, status: 'accepted', matchId, gameId },
     });
 
-    void supabase
+    const { error } = await supabase
       .from('multiplayer_invitations')
       .update({ status: 'accepted' })
-      .eq('match_id', incomingInvite.matchId);
+      .eq('match_id', matchId);
+
+    if (error) {
+      console.error('[MultiplayerContext] Failed to update invitation to accepted in DB:', error);
+      alert('Unable to record accepted invitation in database. Please check your connection.');
+    }
 
     setActiveMatch({
       matchId,
       gameId,
       role: 'guest',
-      opponentName: incomingInvite.fromName,
+      opponentName: fromName,
     });
 
     setIncomingInvite(null);
@@ -543,6 +579,7 @@ export function MultiplayerProvider({ children }: { children: React.ReactNode })
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useMultiplayer() {
   const ctx = useContext(MultiplayerContext);
   if (!ctx) throw new Error('useMultiplayer must be used within <MultiplayerProvider>');
