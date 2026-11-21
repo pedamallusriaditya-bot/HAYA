@@ -20,6 +20,8 @@ jobs:
         run: npm ci
       - name: TypeScript Check
         run: npm run typecheck
+      - name: TypeScript Test Check
+        run: npm run typecheck:test
       - name: ESLint
         run: npm run lint
       - name: Run Tests
