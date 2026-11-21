@@ -179,6 +179,78 @@ export function countTokensHome(player: PlayerState): number {
   return player.tokens.filter((t) => t.step === GOAL_STEP).length;
 }
 
+export type RollEvaluation = {
+  legalMoves: number[];
+  noMoves: boolean;
+  nextTurn: LudoColor;
+};
+
+/**
+ * Given the player list, active color, and dice roll, evaluates whether
+ * legal moves exist and determines the authoritative next turn if no moves exist.
+ */
+export function evaluateRoll(
+  players: PlayerState[],
+  color: LudoColor,
+  roll: number
+): RollEvaluation {
+  const player = players.find((p) => p.color === color);
+  const legalMoves = player ? getLegalMoves(player, roll) : [];
+  const noMoves = legalMoves.length === 0;
+  const nextTurn = getNextTurnColor(color, players);
+  return { legalMoves, noMoves, nextTurn };
+}
+
+export type LudoSnapshot = {
+  seq: number;
+  currentTurn: LudoColor;
+  activeRoll: number | null;
+  extraTurn: boolean;
+  players: PlayerState[];
+  diceRolls: Record<LudoColor, number | null>;
+  winner: PlayerState | null;
+};
+
+export type LudoRollMessage = {
+  color: LudoColor;
+  roll: number;
+  seq: number;
+  noMoves: boolean;
+  nextTurn: LudoColor;
+};
+
+export type LudoMoveMessage = {
+  color: LudoColor;
+  tokenId: number;
+  roll: number;
+  seq: number;
+  givesExtraTurn: boolean;
+  nextTurn: LudoColor;
+  reachedHome: boolean;
+};
+
+/**
+ * Validates whether an incoming sequence number is strictly newer than the last applied sequence.
+ */
+export function isValidNextSeq(lastAppliedSeq: number, incomingSeq: number): boolean {
+  return incomingSeq > lastAppliedSeq;
+}
+
+/**
+ * Checks whether an incoming sequence number has a gap (i.e. skipped messages).
+ */
+export function isSeqGap(lastAppliedSeq: number, incomingSeq: number): boolean {
+  return incomingSeq > lastAppliedSeq + 1;
+}
+
+/**
+ * Validates whether an incoming snapshot should be adopted.
+ * A snapshot is adopted if its sequence number is greater than or equal to the local sequence.
+ */
+export function shouldAdoptSnapshot(localSeq: number, incomingSeq: number): boolean {
+  return incomingSeq >= localSeq;
+}
+
 /**
  * Predictable, deterministic bot color assignment order:
  * Given a human color choice and number of bots (1, 2, or 3),

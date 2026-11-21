@@ -19,8 +19,15 @@ import {
   applyRemoteMove,
   getNextTurnColor,
   createOnlineMatchPlayers,
+  evaluateRoll,
+  isValidNextSeq,
+  isSeqGap,
+  shouldAdoptSnapshot,
   type PlayerState,
   type LudoColor,
+  type LudoSnapshot,
+  type LudoRollMessage,
+  type LudoMoveMessage,
 } from './engine';
 import { getLudoBotMove } from './ai';
 import OnlineColorReservation from './OnlineColorReservation';
@@ -71,6 +78,10 @@ export default function LudoGame() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const matchChannelRef = useRef<any>(null);
 
+  // Sequence numbers for monotonic message ordering and gap detection
+  const seqRef = useRef<number>(0);
+  const lastAppliedSeqRef = useRef<number>(0);
+
   // Mutable refs to prevent stale closures inside long-lived Realtime channel subscriptions
   const onlineMyColorRef = useRef<LudoColor | null>(onlineMyColor);
   onlineMyColorRef.current = onlineMyColor;
@@ -78,13 +89,65 @@ export default function LudoGame() {
   const onlineOpponentColorRef = useRef<LudoColor | null>(onlineOpponentColor);
   onlineOpponentColorRef.current = onlineOpponentColor;
 
+  const playersRef = useRef<PlayerState[]>(players);
+  playersRef.current = players;
+
+  const currentTurnRef = useRef<LudoColor>(currentTurn);
+  currentTurnRef.current = currentTurn;
+
+  const activeRollRef = useRef<number | null>(activeRoll);
+  activeRollRef.current = activeRoll;
+
+  const extraTurnRef = useRef<boolean>(extraTurn);
+  extraTurnRef.current = extraTurn;
+
+  const diceRollsRef = useRef<Record<LudoColor, number | null>>(diceRolls);
+  diceRollsRef.current = diceRolls;
+
+  const winnerRef = useRef<PlayerState | null>(winner);
+  winnerRef.current = winner;
+
+  const modeRef = useRef<GameMode>(mode);
+  modeRef.current = mode;
+
+  const isHostRef = useRef<boolean>(activeMatch?.role === 'host');
+  isHostRef.current = activeMatch?.role === 'host';
+
+  const broadcastSnapshotRef = useRef<() => void>(() => {});
+
   const handleRemoteMoveRef = useRef<
-    (color: LudoColor, tokenId: number, roll: number, givesExtraTurn: boolean) => void
+    (
+      color: LudoColor,
+      tokenId: number,
+      roll: number,
+      givesExtraTurn: boolean,
+      nextTurn: LudoColor
+    ) => void
   >(() => {});
   const startOnlineMatchRef = useRef<(myCol: LudoColor, oppCol: LudoColor) => void>(() => {});
 
   const setInMatchStatusRef = useRef(setInMatchStatus);
   setInMatchStatusRef.current = setInMatchStatus;
+
+  // Broadcast current authoritative snapshot
+  const broadcastSnapshot = useCallback(() => {
+    if (modeRef.current !== 'online_playing' || !matchChannelRef.current) return;
+    const snapshot: LudoSnapshot = {
+      seq: seqRef.current,
+      currentTurn: currentTurnRef.current,
+      activeRoll: activeRollRef.current,
+      extraTurn: extraTurnRef.current,
+      players: playersRef.current,
+      diceRolls: diceRollsRef.current,
+      winner: winnerRef.current,
+    };
+    void matchChannelRef.current.send({
+      type: 'broadcast',
+      event: 'ludo_state',
+      payload: snapshot,
+    });
+  }, []);
+  broadcastSnapshotRef.current = broadcastSnapshot;
 
   // Check if active match from invitation or URL query parameter
   const matchId = activeMatch?.matchId || (path.includes('match=') ? path.split('match=')[1]?.split('&')[0] : null);
@@ -124,17 +187,64 @@ export default function LudoGame() {
     ch.on('presence', { event: 'sync' }, () => {
       const state = ch.presenceState();
       const names = Object.keys(state);
-      setOpponentConnected(names.some((n) => n !== myName));
+      const isOpponentPresent = names.some((n) => n !== myName);
+      setOpponentConnected(isOpponentPresent);
+
+      // Host broadcasts snapshot whenever opponent (re)joins
+      if (isOpponentPresent && isHostRef.current && modeRef.current === 'online_playing') {
+        broadcastSnapshotRef.current();
+      }
     })
       .on('broadcast', { event: 'ludo_move' }, ({ payload }) => {
-        const { color, tokenId, roll, givesExtraTurn } = payload;
-        handleRemoteMoveRef.current(color, tokenId, roll, givesExtraTurn);
+        const { color, tokenId, roll, seq, givesExtraTurn, nextTurn } = payload as LudoMoveMessage;
+        if (!isValidNextSeq(lastAppliedSeqRef.current, seq)) return;
+        if (isSeqGap(lastAppliedSeqRef.current, seq)) {
+          void ch.send({ type: 'broadcast', event: 'ludo_state_request', payload: {} });
+        }
+        lastAppliedSeqRef.current = seq;
+        if (seq > seqRef.current) seqRef.current = seq;
+
+        handleRemoteMoveRef.current(color, tokenId, roll, givesExtraTurn, nextTurn);
       })
       .on('broadcast', { event: 'ludo_roll' }, ({ payload }) => {
-        const { color, roll } = payload;
+        const { color, roll, seq, noMoves, nextTurn } = payload as LudoRollMessage;
+        if (!isValidNextSeq(lastAppliedSeqRef.current, seq)) return;
+        if (isSeqGap(lastAppliedSeqRef.current, seq)) {
+          void ch.send({ type: 'broadcast', event: 'ludo_state_request', payload: {} });
+        }
+        lastAppliedSeqRef.current = seq;
+        if (seq > seqRef.current) seqRef.current = seq;
+
         setDiceRolls((prev) => ({ ...prev, [color]: roll }));
         setActiveRoll(roll);
         arcadeAudio.playBlip();
+
+        if (noMoves) {
+          // Authoritative noMoves from sender: advance turn after 800ms
+          setTimeout(() => {
+            setActiveRoll(null);
+            setExtraTurn(false);
+            setCurrentTurn(nextTurn);
+          }, 800);
+        }
+      })
+      .on('broadcast', { event: 'ludo_state' }, ({ payload }) => {
+        const snap = payload as LudoSnapshot;
+        if (!snap || typeof snap.seq !== 'number') return;
+        if (shouldAdoptSnapshot(lastAppliedSeqRef.current, snap.seq)) {
+          lastAppliedSeqRef.current = snap.seq;
+          if (snap.seq > seqRef.current) seqRef.current = snap.seq;
+          setPlayers(snap.players);
+          setCurrentTurn(snap.currentTurn);
+          setActiveRoll(snap.activeRoll);
+          setExtraTurn(snap.extraTurn);
+          setDiceRolls(snap.diceRolls);
+          setWinner(snap.winner);
+          setMode('online_playing');
+        }
+      })
+      .on('broadcast', { event: 'ludo_state_request' }, () => {
+        broadcastSnapshotRef.current();
       })
       .on('broadcast', { event: 'ludo_restart' }, () => {
         const myCol = onlineMyColorRef.current;
@@ -146,6 +256,12 @@ export default function LudoGame() {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           void ch.track({ joined_at: Date.now() });
+          // Ask for state on join / reconnect
+          void ch.send({
+            type: 'broadcast',
+            event: 'ludo_state_request',
+            payload: {},
+          });
         }
       });
 
@@ -201,6 +317,8 @@ export default function LudoGame() {
   const startOnlineMatch = useCallback(
     (myCol: LudoColor, oppCol: LudoColor) => {
       resetSession();
+      seqRef.current = 0;
+      lastAppliedSeqRef.current = 0;
       setOnlineMyColor(myCol);
       setOnlineOpponentColor(oppCol);
 
@@ -251,6 +369,7 @@ export default function LudoGame() {
   // Roll the dice for active player
   const rollDice = useCallback(() => {
     if (activeRoll !== null || isRolling || winner !== null || !activePlayer) return;
+    if (mode === 'online_playing' && currentTurn !== onlineMyColor) return;
 
     setIsRolling(true);
     arcadeAudio.playMove(currentTurn === humanColor);
@@ -264,30 +383,42 @@ export default function LudoGame() {
       setActiveRoll(roll);
       setIsRolling(false);
 
+      const { noMoves, nextTurn } = evaluateRoll(players, currentTurn, roll);
+
       // Broadcast in online mode
       if (mode === 'online_playing' && matchChannelRef.current) {
+        seqRef.current += 1;
+        const nextSeq = seqRef.current;
+        lastAppliedSeqRef.current = nextSeq;
+
         void matchChannelRef.current.send({
           type: 'broadcast',
           event: 'ludo_roll',
-          payload: { color: currentTurn, roll },
+          payload: {
+            color: currentTurn,
+            roll,
+            seq: nextSeq,
+            noMoves,
+            nextTurn,
+          },
         });
       }
 
-      // Check if any legal moves are possible
-      const moves = getLegalMoves(activePlayer, roll);
-      if (moves.length === 0) {
+      if (noMoves) {
         // No moves possible -> turn advances after brief pause
         setTimeout(() => {
           advanceTurn(currentTurn, players);
+          broadcastSnapshotRef.current();
         }, 800);
       }
     }, 450);
-  }, [activeRoll, isRolling, winner, activePlayer, currentTurn, humanColor, mode, advanceTurn, players]);
+  }, [activeRoll, isRolling, winner, activePlayer, mode, currentTurn, onlineMyColor, humanColor, players, advanceTurn]);
 
   // Execute a local token move
   const handleTokenMove = useCallback(
     (tokenId: number) => {
       if (activeRoll === null || winner !== null || !activePlayer) return;
+      if (mode === 'online_playing' && currentTurn !== onlineMyColor) return;
 
       const playerClone: PlayerState = {
         ...activePlayer,
@@ -310,8 +441,14 @@ export default function LudoGame() {
       setPlayers(nextPlayers);
       arcadeAudio.playMove(currentTurn === humanColor);
 
+      const nextTurn = getNextTurnColor(currentTurn, players);
+
       // Broadcast move in online mode
       if (mode === 'online_playing' && matchChannelRef.current) {
+        seqRef.current += 1;
+        const nextSeq = seqRef.current;
+        lastAppliedSeqRef.current = nextSeq;
+
         void matchChannelRef.current.send({
           type: 'broadcast',
           event: 'ludo_move',
@@ -319,7 +456,9 @@ export default function LudoGame() {
             color: currentTurn,
             tokenId,
             roll: activeRoll,
+            seq: nextSeq,
             givesExtraTurn: result.givesExtraTurn,
+            nextTurn,
             reachedHome: result.reachedHome,
           },
         });
@@ -350,6 +489,8 @@ export default function LudoGame() {
           botDifficulty: isOnline ? null : currentTier.name,
           matchId: isOnline && matchId ? matchId : undefined,
         });
+
+        broadcastSnapshotRef.current();
         return;
       }
 
@@ -357,11 +498,13 @@ export default function LudoGame() {
       if (result.givesExtraTurn) {
         setActiveRoll(null);
         setExtraTurn(true);
+        broadcastSnapshotRef.current();
       } else {
         advanceTurn(currentTurn, players);
+        broadcastSnapshotRef.current();
       }
     },
-    [activeRoll, winner, activePlayer, otherPlayers, players, currentTurn, humanColor, mode, submit, advanceTurn, onlineMyColor, activeMatch?.opponentName, currentTier.name, matchId, recordResult]
+    [activeRoll, winner, activePlayer, mode, currentTurn, onlineMyColor, otherPlayers, players, humanColor, submit, activeMatch?.opponentName, currentTier.name, matchId, recordResult, advanceTurn]
   );
 
   // Handle move received from remote online opponent
@@ -370,27 +513,21 @@ export default function LudoGame() {
       color: LudoColor,
       tokenId: number,
       roll: number,
-      givesExtraTurn: boolean
+      givesExtraTurn: boolean,
+      nextTurn: LudoColor
     ) => {
-      let isOpponentVictorious = false;
-      let wonActor: PlayerState | null = null;
+      const currentPlayers = playersRef.current;
+      const { nextPlayers, isWinningMove, winner: victor } = applyRemoteMove(
+        currentPlayers,
+        color,
+        tokenId,
+        roll
+      );
 
-      setPlayers((prev) => {
-        const { nextPlayers, isWinningMove, winner: victor } = applyRemoteMove(
-          prev,
-          color,
-          tokenId,
-          roll
-        );
-        if (isWinningMove && victor) {
-          isOpponentVictorious = true;
-          wonActor = victor;
-        }
-        return nextPlayers;
-      });
+      setPlayers(nextPlayers);
 
-      if (isOpponentVictorious && wonActor) {
-        setWinner(wonActor);
+      if (isWinningMove && victor) {
+        setWinner(victor);
         arcadeAudio.playDraw();
         void recordResult({
           result: 'loss',
@@ -410,13 +547,12 @@ export default function LudoGame() {
         setActiveRoll(null);
         setExtraTurn(true);
       } else {
-        setPlayers((currentPlayers) => {
-          advanceTurn(color, currentPlayers);
-          return currentPlayers;
-        });
+        setActiveRoll(null);
+        setExtraTurn(false);
+        setCurrentTurn(nextTurn);
       }
     },
-    [advanceTurn, activeMatch?.opponentName, matchId, recordResult]
+    [activeMatch?.opponentName, matchId, recordResult]
   );
   handleRemoteMoveRef.current = handleRemoteMove;
 

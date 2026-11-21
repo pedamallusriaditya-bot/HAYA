@@ -6,6 +6,11 @@ import {
   applyRemoteMove,
   getNextTurnColor,
   COLOR_START_OFFSETS,
+  evaluateRoll,
+  isValidNextSeq,
+  isSeqGap,
+  shouldAdoptSnapshot,
+  executeMove,
   type PlayerState,
 } from './engine.ts';
 
@@ -195,5 +200,102 @@ test('Stale Closure Demonstration: Ref pattern vs stale closure on match restart
   assert.notEqual(restarted, null, 'Ref-based handler successfully restarts the match');
   assert.equal(restarted?.players.length, 2);
   assert.equal(restarted?.startingTurn, 'red');
+});
+
+test('evaluateRoll: Evaluates legal moves and authoritative no-moves turn advancement', () => {
+  const { players } = createOnlineMatchPlayers('red', 'green');
+
+  // Case 1: All red tokens in yard, roll is 3 (not 6) -> no legal moves, noMoves: true, nextTurn: green
+  const noMovesYard = evaluateRoll(players, 'red', 3);
+  assert.equal(noMovesYard.legalMoves.length, 0);
+  assert.equal(noMovesYard.noMoves, true);
+  assert.equal(noMovesYard.nextTurn, 'green');
+
+  // Case 2: All red tokens in yard, roll is 6 -> all 4 can leave yard, noMoves: false
+  const canRelease = evaluateRoll(players, 'red', 6);
+  assert.equal(canRelease.legalMoves.length, 4);
+  assert.equal(canRelease.noMoves, false);
+
+  // Case 3: Token near goal at step 54, roll is 3 (54 + 3 = 57 > 56) -> no moves possible
+  players[0].tokens[0].step = 54;
+  players[0].tokens[1].step = 56;
+  players[0].tokens[2].step = 56;
+  players[0].tokens[3].step = 56;
+
+  const overshoot = evaluateRoll(players, 'red', 3);
+  assert.equal(overshoot.legalMoves.length, 0);
+  assert.equal(overshoot.noMoves, true);
+  assert.equal(overshoot.nextTurn, 'green');
+
+  // Case 4: Token at step 54 rolls exact 2 (54 + 2 = 56) -> 1 legal move
+  const exact = evaluateRoll(players, 'red', 2);
+  assert.equal(exact.legalMoves.length, 1);
+  assert.equal(exact.legalMoves[0], 0);
+  assert.equal(exact.noMoves, false);
+});
+
+test('executeMove: Awards extra turn on 6, capture, and reaching home', () => {
+  const { players } = createOnlineMatchPlayers('red', 'green');
+
+  // 1. Roll of 6 awards extra turn
+  const p1 = { ...players[0], tokens: [{ id: 0, step: -1 }, { id: 1, step: -1 }, { id: 2, step: -1 }, { id: 3, step: -1 }] };
+  const resRoll6 = executeMove(p1, players[1], 0, 6);
+  assert.equal(resRoll6.givesExtraTurn, true, 'Roll of 6 awards extra turn');
+  assert.equal(p1.tokens[0].step, 0);
+
+  // 2. Normal move (e.g. roll 3) does NOT award extra turn
+  const resRoll3 = executeMove(p1, players[1], 0, 3);
+  assert.equal(resRoll3.givesExtraTurn, false, 'Normal step does not award extra turn');
+  assert.equal(p1.tokens[0].step, 3);
+
+  // 3. Capturing opponent token awards extra turn
+  // Red token at step 3 rolls 1 -> lands on step 4.
+  // Green token placed on global track coordinate 4 (relative step 30).
+  const opp = { ...players[1], tokens: [{ id: 0, step: 30 }, { id: 1, step: -1 }, { id: 2, step: -1 }, { id: 3, step: -1 }] };
+  const resCapture = executeMove(p1, opp, 0, 1);
+  assert.equal(resCapture.givesExtraTurn, true, 'Capture awards extra turn');
+  assert.equal(resCapture.capturedOpponentTokenId, 0);
+  assert.equal(opp.tokens[0].step, -1, 'Captured token returned to yard');
+
+  // 4. Reaching home (step 56) awards extra turn
+  p1.tokens[1].step = 54;
+  const resHome = executeMove(p1, opp, 1, 2);
+  assert.equal(p1.tokens[1].step, 56);
+  assert.equal(resHome.reachedHome, true);
+  assert.equal(resHome.givesExtraTurn, true, 'Reaching home awards extra turn');
+});
+
+test('Sequence Ordering & Gap Detection: Rejects duplicates/stale messages and detects gaps', () => {
+  const lastApplied = 5;
+
+  // Newer message accepted
+  assert.equal(isValidNextSeq(lastApplied, 6), true);
+  assert.equal(isValidNextSeq(lastApplied, 10), true);
+
+  // Duplicate rejected
+  assert.equal(isValidNextSeq(lastApplied, 5), false);
+
+  // Stale / out-of-order rejected
+  assert.equal(isValidNextSeq(lastApplied, 4), false);
+  assert.equal(isValidNextSeq(lastApplied, 0), false);
+
+  // Gap detection
+  assert.equal(isSeqGap(lastApplied, 6), false, 'seq 6 immediately follows 5: no gap');
+  assert.equal(isSeqGap(lastApplied, 7), true, 'seq 7 skips 6: gap detected');
+  assert.equal(isSeqGap(lastApplied, 10), true, 'seq 10 skips 6..9: gap detected');
+});
+
+test('Snapshot Adoption: Adopts newer or equal snapshots, rejects older snapshots', () => {
+  const localSeq = 10;
+
+  // Newer snapshot accepted
+  assert.equal(shouldAdoptSnapshot(localSeq, 15), true);
+
+  // Equal snapshot accepted (e.g. full state refresh on reconnect)
+  assert.equal(shouldAdoptSnapshot(localSeq, 10), true);
+
+  // Older snapshot rejected
+  assert.equal(shouldAdoptSnapshot(localSeq, 9), false);
+  assert.equal(shouldAdoptSnapshot(localSeq, 2), false);
 });
 
