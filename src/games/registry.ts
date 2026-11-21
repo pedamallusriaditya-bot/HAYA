@@ -155,7 +155,7 @@ export const GAMES: GameMeta[] = [
     description: 'Full legal-move chess with check, checkmate, castling and promotion.',
     mode: 'multi',
     status: 'playable',
-    online: false,
+    online: true,
     icon: Crown,
     gradient: 'from-slate-400/30 to-slate-600/10',
     rules: ['Standard chess rules apply.', 'Includes castling, en passant and promotion.'],

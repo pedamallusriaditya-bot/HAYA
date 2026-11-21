@@ -11,7 +11,9 @@ import { CHESS_DIFFICULTIES, type DifficultyTier } from '@/components/bot/botCon
 import ChessBoard from './ChessBoard';
 import ChessPiece from './ChessPieces';
 import PromotionModal from './PromotionModal';
+import OnlineRoom from './OnlineRoom';
 import { useAuth } from '@/auth/AuthContext';
+import { useMultiplayer } from '@/context/MultiplayerContext';
 import PlayerAvatar from '@/components/avatar/PlayerAvatar';
 import { getCachedAvatar } from '@/lib/avatarStorage';
 import {
@@ -27,6 +29,7 @@ import { getBotChessMove } from './ai';
 type GameMode = 'choose' | 'bot';
 
 export default function ChessGame() {
+  const { activeMatch, exitActiveMatch } = useMultiplayer();
   const { profile } = useAuth();
   const rawName = profile?.display_name || profile?.email?.split('@')[0] || 'Player';
   const playerName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
@@ -226,6 +229,21 @@ export default function ChessGame() {
     const next = arcadeAudio.toggleSound();
     setSoundOn(next);
   };
+
+  // Active online match handling
+  if (activeMatch && activeMatch.gameId === 'chess') {
+    return (
+      <OnlineRoom
+        matchId={activeMatch.matchId}
+        role={activeMatch.role}
+        opponentName={activeMatch.opponentName}
+        onExit={() => {
+          exitActiveMatch();
+          setMode('choose');
+        }}
+      />
+    );
+  }
 
   // Pre-game selection station
   if (mode === 'choose') {
