@@ -11,7 +11,12 @@ import {
   isSeqGap,
   shouldAdoptSnapshot,
   executeMove,
+  createLudoSnapshot,
   type PlayerState,
+  type LudoColor,
+  type LudoRollMessage,
+  type LudoTurnMessage,
+  type LudoMoveMessage,
 } from './engine.ts';
 
 test('createOnlineMatchPlayers: Creates fresh 2-player state with correct starting turn', () => {
@@ -285,17 +290,165 @@ test('Sequence Ordering & Gap Detection: Rejects duplicates/stale messages and d
   assert.equal(isSeqGap(lastApplied, 10), true, 'seq 10 skips 6..9: gap detected');
 });
 
-test('Snapshot Adoption: Adopts newer or equal snapshots, rejects older snapshots', () => {
+test('Snapshot Adoption: Stale equal-seq snapshot is rejected, newer seq is adopted', () => {
   const localSeq = 10;
 
   // Newer snapshot accepted
   assert.equal(shouldAdoptSnapshot(localSeq, 15), true);
 
-  // Equal snapshot accepted (e.g. full state refresh on reconnect)
-  assert.equal(shouldAdoptSnapshot(localSeq, 10), true);
+  // Equal snapshot rejected to prevent stale snapshot rollbacks
+  assert.equal(shouldAdoptSnapshot(localSeq, 10), false, 'Equal seq snapshot must be rejected to prevent desync');
 
   // Older snapshot rejected
   assert.equal(shouldAdoptSnapshot(localSeq, 9), false);
   assert.equal(shouldAdoptSnapshot(localSeq, 2), false);
+
+  // Unstarted client adopts initial snapshot
+  assert.equal(shouldAdoptSnapshot(0, 0), true);
+  assert.equal(shouldAdoptSnapshot(0, 5), true);
+});
+
+test('Online Turn Advance: Roll with no moves followed by ludo_turn advances exactly once on both clients', () => {
+  const { players, startingTurn } = createOnlineMatchPlayers('red', 'green', 'Friend');
+  assert.equal(startingTurn, 'red');
+
+  // State on Roller (Client A)
+  let rollerTurn: LudoColor = startingTurn;
+  let rollerSeq = 0;
+  let rollerRoll: number | null = null;
+
+  // State on Receiver (Client B)
+  let receiverTurn: LudoColor = startingTurn;
+  let receiverLastAppliedSeq = 0;
+  let receiverRoll: number | null = null;
+
+  // 1. Client A rolls 3 (all tokens in yard -> noMoves)
+  const evalResult = evaluateRoll(players, rollerTurn, 3);
+  assert.equal(evalResult.noMoves, true);
+  assert.equal(evalResult.nextTurn, 'green');
+
+  rollerSeq += 1; // seq = 1
+  rollerRoll = 3;
+  const rollMsg: LudoRollMessage = {
+    color: rollerTurn,
+    roll: 3,
+    seq: rollerSeq,
+    noMoves: true,
+    nextTurn: evalResult.nextTurn,
+  };
+
+  // 2. Client B receives ludo_roll
+  assert.equal(isValidNextSeq(receiverLastAppliedSeq, rollMsg.seq), true);
+  receiverLastAppliedSeq = rollMsg.seq; // seq = 1
+  receiverRoll = rollMsg.roll;
+  // Receiver does NOT advance turn yet; waits for ludo_turn
+  assert.equal(receiverTurn, 'red', 'Receiver turn remains on red while showing roll');
+  assert.equal(rollerTurn, 'red');
+
+  // 3. Roller timer expires: Roller advances turn and broadcasts ludo_turn with next seq
+  rollerSeq += 1; // seq = 2
+  rollerTurn = evalResult.nextTurn;
+  rollerRoll = null;
+
+  const turnMsg: LudoTurnMessage = {
+    seq: rollerSeq,
+    nextTurn: evalResult.nextTurn,
+  };
+
+  // 4. Receiver applies ludo_turn
+  assert.equal(isValidNextSeq(receiverLastAppliedSeq, turnMsg.seq), true);
+  receiverLastAppliedSeq = turnMsg.seq; // seq = 2
+  receiverTurn = turnMsg.nextTurn;
+  receiverRoll = null;
+
+  // Both clients are now exactly synchronized on turn and sequence!
+  assert.equal(rollerTurn, 'green');
+  assert.equal(receiverTurn, 'green');
+  assert.equal(rollerSeq, 2);
+  assert.equal(receiverLastAppliedSeq, 2);
+  assert.equal(rollerRoll, null);
+  assert.equal(receiverRoll, null);
+});
+
+test('Online Turn Flow: Extra turn keeps the turn and does not advance', () => {
+  const { players, startingTurn } = createOnlineMatchPlayers('red', 'green', 'Friend');
+  assert.equal(startingTurn, 'red');
+
+  const rollerTurn: LudoColor = startingTurn;
+  let rollerSeq = 0;
+  const receiverTurn: LudoColor = startingTurn;
+  let receiverLastAppliedSeq = 0;
+
+  // 1. Red rolls 6 (can release token from yard)
+  const evalRoll = evaluateRoll(players, rollerTurn, 6);
+  assert.equal(evalRoll.noMoves, false);
+  rollerSeq += 1; // seq = 1
+
+  // 2. Red moves token 0 out of yard
+  const { nextPlayers, moveResult } = applyRemoteMove(players, rollerTurn, 0, 6);
+  assert.equal(moveResult.givesExtraTurn, true);
+
+  rollerSeq += 1; // seq = 2
+  const moveMsg: LudoMoveMessage = {
+    color: rollerTurn,
+    tokenId: 0,
+    roll: 6,
+    seq: rollerSeq,
+    givesExtraTurn: moveResult.givesExtraTurn,
+    nextTurn: 'green',
+    reachedHome: false,
+  };
+
+  // Receiver applies move
+  assert.equal(isValidNextSeq(receiverLastAppliedSeq, moveMsg.seq), true);
+  receiverLastAppliedSeq = moveMsg.seq;
+  const receiverResult = applyRemoteMove(players, moveMsg.color, moveMsg.tokenId, moveMsg.roll);
+
+  // Both clients keep turn with roller on extra turn
+  assert.equal(rollerTurn, 'red', 'Turn stays with roller on extra turn');
+  assert.equal(receiverTurn, 'red', 'Receiver also keeps turn with roller on extra turn');
+  assert.equal(nextPlayers[0].tokens[0].step, 0);
+  assert.equal(receiverResult.nextPlayers[0].tokens[0].step, 0);
+});
+
+test('Online Sequence Ordering: Late or duplicate message is ignored', () => {
+  const lastApplied = 5;
+
+  // Duplicate seq rejected
+  assert.equal(isValidNextSeq(lastApplied, 5), false);
+
+  // Stale seq rejected
+  assert.equal(isValidNextSeq(lastApplied, 4), false);
+  assert.equal(isValidNextSeq(lastApplied, 1), false);
+
+  // Equal-seq snapshot rejected
+  assert.equal(shouldAdoptSnapshot(lastApplied, 5), false);
+
+  // Older-seq snapshot rejected
+  assert.equal(shouldAdoptSnapshot(lastApplied, 4), false);
+
+  // Newer snapshot accepted
+  assert.equal(shouldAdoptSnapshot(lastApplied, 6), true);
+});
+
+test('createLudoSnapshot: Builds snapshot from explicitly passed arguments', () => {
+  const { players } = createOnlineMatchPlayers('red', 'green', 'Friend');
+  const snap = createLudoSnapshot(
+    7,
+    'green',
+    null,
+    false,
+    players,
+    { red: 5, green: null, yellow: null, blue: null },
+    null
+  );
+
+  assert.equal(snap.seq, 7);
+  assert.equal(snap.currentTurn, 'green');
+  assert.equal(snap.activeRoll, null);
+  assert.equal(snap.extraTurn, false);
+  assert.equal(snap.players, players);
+  assert.equal(snap.diceRolls.red, 5);
+  assert.equal(snap.winner, null);
 });
 

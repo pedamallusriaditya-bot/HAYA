@@ -28,6 +28,8 @@ import {
   type LudoSnapshot,
   type LudoRollMessage,
   type LudoMoveMessage,
+  type LudoTurnMessage,
+  createLudoSnapshot,
 } from './engine';
 import { getLudoBotMove } from './ai';
 import OnlineColorReservation from './OnlineColorReservation';
@@ -113,7 +115,7 @@ export default function LudoGame() {
   const isHostRef = useRef<boolean>(activeMatch?.role === 'host');
   isHostRef.current = activeMatch?.role === 'host';
 
-  const broadcastSnapshotRef = useRef<() => void>(() => {});
+  const broadcastSnapshotRef = useRef<(override?: Partial<LudoSnapshot>) => void>(() => {});
 
   const handleRemoteMoveRef = useRef<
     (
@@ -129,18 +131,18 @@ export default function LudoGame() {
   const setInMatchStatusRef = useRef(setInMatchStatus);
   setInMatchStatusRef.current = setInMatchStatus;
 
-  // Broadcast current authoritative snapshot
-  const broadcastSnapshot = useCallback(() => {
+  // Broadcast current authoritative snapshot (built from explicit values when provided, or latest committed refs when idle)
+  const broadcastSnapshot = useCallback((override?: Partial<LudoSnapshot>) => {
     if (modeRef.current !== 'online_playing' || !matchChannelRef.current) return;
-    const snapshot: LudoSnapshot = {
-      seq: seqRef.current,
-      currentTurn: currentTurnRef.current,
-      activeRoll: activeRollRef.current,
-      extraTurn: extraTurnRef.current,
-      players: playersRef.current,
-      diceRolls: diceRollsRef.current,
-      winner: winnerRef.current,
-    };
+    const snapshot = createLudoSnapshot(
+      override?.seq ?? seqRef.current,
+      override?.currentTurn ?? currentTurnRef.current,
+      override?.activeRoll !== undefined ? override.activeRoll : activeRollRef.current,
+      override?.extraTurn ?? extraTurnRef.current,
+      override?.players ?? playersRef.current,
+      override?.diceRolls ?? diceRollsRef.current,
+      override?.winner !== undefined ? override.winner : winnerRef.current
+    );
     void matchChannelRef.current.send({
       type: 'broadcast',
       event: 'ludo_state',
@@ -207,7 +209,7 @@ export default function LudoGame() {
         handleRemoteMoveRef.current(color, tokenId, roll, givesExtraTurn, nextTurn);
       })
       .on('broadcast', { event: 'ludo_roll' }, ({ payload }) => {
-        const { color, roll, seq, noMoves, nextTurn } = payload as LudoRollMessage;
+        const { color, roll, seq } = payload as LudoRollMessage;
         if (!isValidNextSeq(lastAppliedSeqRef.current, seq)) return;
         if (isSeqGap(lastAppliedSeqRef.current, seq)) {
           void ch.send({ type: 'broadcast', event: 'ludo_state_request', payload: {} });
@@ -218,15 +220,20 @@ export default function LudoGame() {
         setDiceRolls((prev) => ({ ...prev, [color]: roll }));
         setActiveRoll(roll);
         arcadeAudio.playBlip();
-
-        if (noMoves) {
-          // Authoritative noMoves from sender: advance turn after 800ms
-          setTimeout(() => {
-            setActiveRoll(null);
-            setExtraTurn(false);
-            setCurrentTurn(nextTurn);
-          }, 800);
+        // Note: receiver does NOT self-advance; awaits authoritative 'ludo_turn' message from the roller
+      })
+      .on('broadcast', { event: 'ludo_turn' }, ({ payload }) => {
+        const { seq, nextTurn } = payload as LudoTurnMessage;
+        if (!isValidNextSeq(lastAppliedSeqRef.current, seq)) return;
+        if (isSeqGap(lastAppliedSeqRef.current, seq)) {
+          void ch.send({ type: 'broadcast', event: 'ludo_state_request', payload: {} });
         }
+        lastAppliedSeqRef.current = seq;
+        if (seq > seqRef.current) seqRef.current = seq;
+
+        setActiveRoll(null);
+        setExtraTurn(false);
+        setCurrentTurn(nextTurn);
       })
       .on('broadcast', { event: 'ludo_state' }, ({ payload }) => {
         const snap = payload as LudoSnapshot;
@@ -408,7 +415,19 @@ export default function LudoGame() {
         // No moves possible -> turn advances after brief pause
         setTimeout(() => {
           advanceTurn(currentTurn, players);
-          broadcastSnapshotRef.current();
+          if (mode === 'online_playing' && matchChannelRef.current) {
+            seqRef.current += 1;
+            const turnSeq = seqRef.current;
+            lastAppliedSeqRef.current = turnSeq;
+            void matchChannelRef.current.send({
+              type: 'broadcast',
+              event: 'ludo_turn',
+              payload: {
+                seq: turnSeq,
+                nextTurn,
+              },
+            });
+          }
         }, 800);
       }
     }, 450);
@@ -490,7 +509,6 @@ export default function LudoGame() {
           matchId: isOnline && matchId ? matchId : undefined,
         });
 
-        broadcastSnapshotRef.current();
         return;
       }
 
@@ -498,10 +516,8 @@ export default function LudoGame() {
       if (result.givesExtraTurn) {
         setActiveRoll(null);
         setExtraTurn(true);
-        broadcastSnapshotRef.current();
       } else {
         advanceTurn(currentTurn, players);
-        broadcastSnapshotRef.current();
       }
     },
     [activeRoll, winner, activePlayer, mode, currentTurn, onlineMyColor, otherPlayers, players, humanColor, submit, activeMatch?.opponentName, currentTier.name, matchId, recordResult, advanceTurn]

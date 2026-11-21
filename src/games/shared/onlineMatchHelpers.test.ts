@@ -30,9 +30,13 @@ test('hasSeqGap: Detects gaps requiring full state resync', () => {
   assert.equal(hasSeqGap(current, 5), false, 'Duplicate is not a gap');
 });
 
-test('shouldAdoptStateSnapshot: Accepts newer or equal snapshots and rejects stale snapshots', () => {
+test('shouldAdoptStateSnapshot: Accepts newer snapshots and rejects stale or equal snapshots', () => {
   const current = 15;
   assert.equal(shouldAdoptStateSnapshot(current, 16), true, 'Newer snapshot accepted');
-  assert.equal(shouldAdoptStateSnapshot(current, 15), true, 'Identical sequence snapshot accepted (reconnect/refresh)');
+  assert.equal(shouldAdoptStateSnapshot(current, 15), false, 'Identical sequence snapshot rejected to prevent rollbacks');
   assert.equal(shouldAdoptStateSnapshot(current, 14), false, 'Stale snapshot rejected');
+
+  // Unstarted client adopts initial snapshot
+  assert.equal(shouldAdoptStateSnapshot(0, 0), true, 'Initial snapshot accepted on unstarted client');
+  assert.equal(shouldAdoptStateSnapshot(0, 5), true, 'Catch-up snapshot accepted on unstarted client');
 });

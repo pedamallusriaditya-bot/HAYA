@@ -229,6 +229,31 @@ export type LudoMoveMessage = {
   reachedHome: boolean;
 };
 
+export type LudoTurnMessage = {
+  seq: number;
+  nextTurn: LudoColor;
+};
+
+export function createLudoSnapshot(
+  seq: number,
+  currentTurn: LudoColor,
+  activeRoll: number | null,
+  extraTurn: boolean,
+  players: PlayerState[],
+  diceRolls: Record<LudoColor, number | null>,
+  winner: PlayerState | null
+): LudoSnapshot {
+  return {
+    seq,
+    currentTurn,
+    activeRoll,
+    extraTurn,
+    players,
+    diceRolls,
+    winner,
+  };
+}
+
 /**
  * Validates whether an incoming sequence number is strictly newer than the last applied sequence.
  */
@@ -245,10 +270,16 @@ export function isSeqGap(lastAppliedSeq: number, incomingSeq: number): boolean {
 
 /**
  * Validates whether an incoming snapshot should be adopted.
- * A snapshot is adopted if its sequence number is greater than or equal to the local sequence.
+ * An incoming snapshot is adopted only when incomingSeq > localSeq,
+ * or when the local client has not started yet (localSeq === 0).
+ * An equal sequence number (incomingSeq === localSeq with localSeq > 0) is rejected
+ * to prevent stale snapshots with the same sequence number from reverting applied moves.
  */
 export function shouldAdoptSnapshot(localSeq: number, incomingSeq: number): boolean {
-  return incomingSeq >= localSeq;
+  if (localSeq === 0) {
+    return incomingSeq >= 0;
+  }
+  return incomingSeq > localSeq;
 }
 
 /**

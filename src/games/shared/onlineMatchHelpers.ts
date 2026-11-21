@@ -22,8 +22,13 @@ export function hasSeqGap(lastAppliedSeq: number, incomingSeq: number): boolean 
 
 /**
  * Validates whether an incoming state snapshot should be adopted.
- * Adopts if incoming sequence is >= last applied sequence.
+ * Adopts if incoming sequence is strictly greater than last applied sequence,
+ * or if the local client has not started yet (lastAppliedSeq === 0).
+ * Equal sequence numbers are rejected to prevent stale snapshot rollbacks.
  */
 export function shouldAdoptStateSnapshot(lastAppliedSeq: number, incomingSeq: number): boolean {
-  return incomingSeq >= lastAppliedSeq;
+  if (lastAppliedSeq === 0) {
+    return incomingSeq >= 0;
+  }
+  return incomingSeq > lastAppliedSeq;
 }
