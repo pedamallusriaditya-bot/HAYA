@@ -23,7 +23,7 @@ export interface UseGameChatReturn {
 
 /**
  * Pure in-memory React state hook for in-game chat and floating reactions.
- * Zero persistence: no database, no localStorage, no sessionStorage, no cookies.
+ * Zero persistence: never saved to disk, browser storage, or remote databases.
  * Disappears completely on unmount, match_exit, or reload.
  */
 export function useGameChat(): UseGameChatReturn {

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   REACTIONS,
   TOP_REACTIONS,
@@ -327,4 +329,40 @@ test('sendBroadcastChat and sendBroadcastReaction: Formatting and channel dispat
   assert.equal(sentPayloads.length, 2);
   assert.equal(sentPayloads[1].event, 'reaction');
   assert.equal(sentPayloads[1].payload.reactionId, 'thumbs_up');
+});
+
+test('Privacy Guard: Chat and reaction files must never touch persistent storage or database tables', () => {
+  const filesToCheck = [
+    'src/games/shared/reactions.ts',
+    'src/games/shared/chatHelpers.ts',
+    'src/games/shared/useGameChat.ts',
+    'src/components/GameChat.tsx',
+    'src/components/GameReactions.tsx',
+  ];
+
+  const forbiddenPatterns = [
+    { pattern: /\blocalStorage\b/i, name: 'localStorage' },
+    { pattern: /\bsessionStorage\b/i, name: 'sessionStorage' },
+    { pattern: /\bindexedDB\b/i, name: 'indexedDB' },
+    { pattern: /supabase\s*\.\s*from\s*\(/, name: 'supabase.from' },
+    { pattern: /\.from\s*\(\s*['"]/, name: '.from(...)' },
+  ];
+
+  for (const relPath of filesToCheck) {
+    const fullPath = path.resolve(process.cwd(), relPath);
+    assert.equal(fs.existsSync(fullPath), true, `File should exist: ${relPath}`);
+    const rawContent = fs.readFileSync(fullPath, 'utf-8');
+    // Strip comments to inspect actual executable code
+    const code = rawContent
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*/g, '');
+
+    for (const { pattern, name } of forbiddenPatterns) {
+      assert.equal(
+        pattern.test(code),
+        false,
+        `Privacy violation: ${relPath} must not reference ${name}`
+      );
+    }
+  }
 });

@@ -74,6 +74,7 @@ HAYA Games features **11 distinct, fully implemented playable machines**, split 
 - **Global Lobby Presence:** Tracks online status, current game activity, and player avatars in real time.
 - **Direct Invitations:** 45-second peer-to-peer match invitations with audible cues and notifications.
 - **Authoritative Color Reservations:** First-come-first-served color locking prevents seat conflicts in online matches.
+- **Ephemeral In-Game Chat & Instant Emoji Reactions:** Direct peer-to-peer messaging and instant floating emoji reactions in every online match (Tic-Tac-Toe, Connect 4, Chess, Snakes & Ladders, Carrom, Ludo). Ephemeral by design: messages and reactions exist exclusively in React state/memory, are never stored or logged anywhere (zero database tables, no localStorage/sessionStorage/IndexedDB, no cookies, no inclusion in game records or state snapshots), and are not end-to-end encrypted. Transported via Supabase Realtime Broadcast on the private match channel, rate-limited and capped in memory (50-message cap, 8-reaction cap), and cleared immediately upon match exit, unmount, or page reload.
 
 ### 🛡️ Offline-First Resilience
 - Built with a hybrid storage architecture: `localStorage` cache + event bus + Supabase PostgreSQL.
