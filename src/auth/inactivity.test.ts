@@ -7,6 +7,8 @@ import {
   setMatchActiveState,
   clearMatchActiveState,
   createFallbackProfile,
+  translateAuthError,
+  resolveProfileStatus,
   INACTIVITY_TIMEOUT_MS,
   MAX_MATCH_DURATION_MS,
   LAST_ACTIVITY_KEY,
@@ -275,4 +277,92 @@ test('Fallback Profile Security: Never grants is_admin on profile creation or lo
   const p2 = createFallbackProfile('00000000-0000-0000-0000-000000000002', 'player2@haya.local');
   assert.equal(p2.is_admin, false, 'Fallback profile for second player must have is_admin: false');
 });
+
+test('Auth Error Translator: maps "database error saving new user" to unauthorized message', () => {
+  const expected = 'This email is not authorized to use HAYA Games.';
+
+  // Exact lowercase
+  assert.equal(translateAuthError('database error saving new user'), expected);
+
+  // Capitalized / Title Case
+  assert.equal(translateAuthError('Database error saving new user'), expected);
+  assert.equal(translateAuthError('Database Error Saving New User'), expected);
+
+  // Uppercase
+  assert.equal(translateAuthError('DATABASE ERROR SAVING NEW USER'), expected);
+
+  // Substring in Supabase trigger error response
+  assert.equal(
+    translateAuthError('AuthApiError: Database error saving new user (code: 500)'),
+    expected
+  );
+
+  // Other standard error mappings
+  assert.equal(
+    translateAuthError('Invalid login credentials'),
+    'Incorrect email or password.'
+  );
+  assert.equal(
+    translateAuthError('User not authorized to access resource'),
+    expected
+  );
+  assert.equal(
+    translateAuthError('Email rate limit exceeded'),
+    'Too many attempts. Please wait a minute and try again.'
+  );
+  assert.equal(
+    translateAuthError('User already registered'),
+    'That account already exists. Try signing in instead.'
+  );
+});
+
+test('Profile Status: Distinguishes between successful empty result (missing) and network/query errors', () => {
+  // 1. Successful query returning a valid profile row -> ready
+  const readyResult = resolveProfileStatus({
+    data: { id: 'u1', email: 'aditya@haya.local', display_name: 'Aditya', is_admin: false },
+    error: null,
+    isDev: false,
+  });
+  assert.equal(readyResult.status, 'ready');
+  assert.equal(readyResult.profile?.id, 'u1');
+
+  // 2. Query succeeded without error, but no row found -> missing (unauthorized)
+  const missingResult = resolveProfileStatus({
+    data: null,
+    error: null,
+    isDev: false,
+  });
+  assert.equal(missingResult.status, 'missing');
+  assert.equal(missingResult.profile, null);
+
+  // 3. Database / PostgREST query error -> error (MUST NOT be treated as missing/unauthorized)
+  const dbErrorResult = resolveProfileStatus({
+    data: null,
+    error: { message: 'relation "profiles" does not exist', code: '42P01' },
+    isDev: false,
+  });
+  assert.equal(dbErrorResult.status, 'error');
+  assert.equal(dbErrorResult.profile, null);
+
+  // 4. Network failure / connection drop -> error
+  const networkErrorResult = resolveProfileStatus({
+    data: null,
+    error: { message: 'Failed to fetch (net::ERR_INTERNET_DISCONNECTED)' },
+    isDev: false,
+  });
+  assert.equal(networkErrorResult.status, 'error');
+  assert.equal(networkErrorResult.profile, null);
+
+  // 5. Dev mode fallback when query fails in local development
+  const devFallbackResult = resolveProfileStatus({
+    data: null,
+    error: { message: 'Fetch error' },
+    isDev: true,
+    emailHint: 'harika@haya.local',
+    uid: '00000000-0000-0000-0000-000000000002',
+  });
+  assert.equal(devFallbackResult.status, 'ready');
+  assert.equal(devFallbackResult.profile?.display_name, 'Harika');
+});
+
 

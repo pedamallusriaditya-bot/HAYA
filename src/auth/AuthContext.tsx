@@ -7,16 +7,16 @@ import {
   isMatchActive,
   evaluateInactivity,
   recordUserActivity,
-  createFallbackProfile,
+  resolveProfileStatus,
   clearMatchActiveState,
   LAST_ACTIVITY_KEY,
   IN_MATCH_KEY,
   LOGOUT_NOTICE_KEY,
 } from './authUtils';
-import { AuthContext, useAuth, type AuthState } from './useAuth';
+import { AuthContext, useAuth, type AuthState, type ProfileStatus } from './useAuth';
 
 // eslint-disable-next-line react-refresh/only-export-components
-export { useAuth, type AuthState };
+export { useAuth, type AuthState, type ProfileStatus };
 
 const DEV_ADITYA_UUID = '00000000-0000-0000-0000-000000000001';
 const DEV_HARIKA_UUID = '00000000-0000-0000-0000-000000000002';
@@ -30,6 +30,7 @@ let devSignInHandler: (
   setNotice: (msg: string) => void,
   setSession: (s: Session | null) => void,
   setProfile: (p: Profile | null) => void,
+  setProfileStatus: (st: ProfileStatus) => void,
   setLoading: (l: boolean) => void
 ) => void = () => {};
 
@@ -85,7 +86,7 @@ if (import.meta.env.DEV) {
     }
   };
 
-  devSignInHandler = (email, name, setNotice, setSession, setProfile, setLoading) => {
+  devSignInHandler = (email, name, setNotice, setSession, setProfile, setProfileStatus, setLoading) => {
     const devAllowed = ((import.meta.env as Record<string, string | undefined>).VITE_ALLOWED_EMAILS || '')
       .split(',')
       .map((e: string) => e.trim().toLowerCase())
@@ -99,6 +100,7 @@ if (import.meta.env.DEV) {
     if (dev) {
       setSession(dev.session);
       setProfile(dev.profile);
+      setProfileStatus('ready');
       setLoading(false);
       localStorage.setItem('haya_last_activity', String(Date.now()));
       void flushUnsyncedRecords(dev.profile.id);
@@ -113,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initialDev = import.meta.env.DEV ? getInitialDevSession() : null;
   const [session, setSession] = useState<Session | null>(() => initialDev?.session ?? null);
   const [profile, setProfile] = useState<Profile | null>(() => initialDev?.profile ?? null);
+  const [profileStatus, setProfileStatus] = useState<ProfileStatus>(() => (initialDev?.profile ? 'ready' : 'loading'));
   const [loading, setLoading] = useState(() => !initialDev);
   const [logoutNotice, setLogoutNotice] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
@@ -134,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function loadProfile(uid: string, emailHint?: string) {
+    setProfileStatus('loading');
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -141,41 +145,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', uid)
         .maybeSingle();
 
-      if (error) {
-        console.warn('[AuthContext] Profile load warning:', error.message);
-        if (import.meta.env.DEV && emailHint) {
-          setProfile(createFallbackProfile(uid, emailHint));
-        } else {
-          setProfile(null);
-        }
-        return;
-      }
+      const resolved = resolveProfileStatus<Profile>({
+        data: (data as Profile) ?? null,
+        error,
+        isDev: Boolean(import.meta.env.DEV),
+        emailHint,
+        uid,
+      });
 
-      if (data) {
-        setProfile(data as Profile);
+      setProfile(resolved.profile as Profile | null);
+      setProfileStatus(resolved.status);
+
+      if (resolved.profile) {
         void flushUnsyncedRecords(uid);
-      } else if (import.meta.env.DEV && emailHint) {
-        // Fallback profile only in local dev environment
-        setProfile(createFallbackProfile(uid, emailHint));
-        void flushUnsyncedRecords(uid);
-      } else {
-        // In production: no profiles row means unauthorized account
-        setProfile(null);
       }
     } catch (err) {
       console.warn('[AuthContext] Network error loading profile:', err);
-      if (import.meta.env.DEV && emailHint) {
-        setProfile(createFallbackProfile(uid, emailHint));
+      const resolved = resolveProfileStatus<Profile>({
+        data: null,
+        error: { message: err instanceof Error ? err.message : String(err) },
+        isDev: Boolean(import.meta.env.DEV),
+        emailHint,
+        uid,
+      });
+      setProfile(resolved.profile as Profile | null);
+      setProfileStatus(resolved.status);
+      if (resolved.profile) {
         void flushUnsyncedRecords(uid);
-      } else {
-        setProfile(null);
       }
     }
   }
 
+  const retryProfileLoad = useCallback(async () => {
+    const uid = session?.user?.id;
+    if (uid) {
+      setLoading(true);
+      try {
+        await loadProfile(uid, session.user.email);
+      } finally {
+        setLoading(false);
+      }
+    }
+  }, [session]);
+
   const devSignIn = useCallback((email: string, name: string) => {
     if (import.meta.env.DEV) {
-      devSignInHandler(email, name, setLogoutNotice, setSession, setProfile, setLoading);
+      devSignInHandler(email, name, setLogoutNotice, setSession, setProfile, setProfileStatus, setLoading);
     }
   }, []);
 
@@ -194,6 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setSession(null);
     setProfile(null);
+    setProfileStatus('loading');
   }, []);
 
   useEffect(() => {
@@ -226,7 +242,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           void loadProfile(uid, newSession.user?.email);
         } else {
           setProfile(null);
+          setProfileStatus('missing');
         }
+      } else {
+        setProfile(null);
+        setProfileStatus('loading');
       }
     });
 
@@ -412,6 +432,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session,
         user: session?.user ?? null,
         profile,
+        profileStatus,
         loading,
         logoutNotice,
         clearLogoutNotice,
@@ -419,6 +440,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signUp,
         devSignIn,
         signOut,
+        retryProfileLoad,
         updateProfileState,
       }}
     >

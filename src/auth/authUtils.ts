@@ -4,10 +4,15 @@ export const LAST_ACTIVITY_KEY = 'haya_last_activity';
 export const IN_MATCH_KEY = 'haya_in_match';
 export const IN_MATCH_TIME_KEY = 'haya_in_match_since';
 export const LOGOUT_NOTICE_KEY = 'haya_logout_notice';
+
+export type ProfileStatus = 'loading' | 'ready' | 'missing' | 'error';
+
 export function translateAuthError(msg: string): string {
   const m = msg.toLowerCase();
   if (m.includes('invalid login credentials')) return 'Incorrect email or password.';
-  if (m.includes('not authorized')) return 'This email is not authorized to use HAYA Games.';
+  if (m.includes('not authorized') || m.includes('database error saving new user')) {
+    return 'This email is not authorized to use HAYA Games.';
+  }
   if (m.includes('rate limit') || m.includes('for security purposes')) {
     return 'Too many attempts. Please wait a minute and try again.';
   }
@@ -202,5 +207,49 @@ export function createFallbackProfile(
     email: emailHint,
     display_name: isSecond ? 'Harika' : 'Aditya',
     is_admin: false,
+  };
+}
+
+export type ProfileQueryResult<TProfile = FallbackProfile> = {
+  data: TProfile | null;
+  error: { message?: string; code?: string } | null;
+  isDev?: boolean;
+  emailHint?: string;
+  uid?: string;
+};
+
+export function resolveProfileStatus<TProfile = FallbackProfile>(
+  result: ProfileQueryResult<TProfile>
+): { status: ProfileStatus; profile: TProfile | FallbackProfile | null } {
+  if (result.error) {
+    if (result.isDev && result.emailHint) {
+      return {
+        status: 'ready',
+        profile: createFallbackProfile(result.uid || 'dev-id', result.emailHint),
+      };
+    }
+    return {
+      status: 'error',
+      profile: null,
+    };
+  }
+
+  if (result.data) {
+    return {
+      status: 'ready',
+      profile: result.data,
+    };
+  }
+
+  if (result.isDev && result.emailHint) {
+    return {
+      status: 'ready',
+      profile: createFallbackProfile(result.uid || 'dev-id', result.emailHint),
+    };
+  }
+
+  return {
+    status: 'missing',
+    profile: null,
   };
 }

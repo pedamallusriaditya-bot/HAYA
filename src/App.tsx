@@ -13,7 +13,7 @@ import MultiplayerStub from '@/pages/MultiplayerStub';
 import AvatarCreator from '@/pages/AvatarCreator';
 
 export default function App() {
-  const { session, loading, profile, signOut } = useAuth();
+  const { session, loading, profileStatus, signOut, retryProfileLoad } = useAuth();
   const { path } = useRouter();
 
   if (loading) {
@@ -28,21 +28,51 @@ export default function App() {
     return <Login />;
   }
 
-  // Allowlist backstop: if a session exists but no profile row was created, the
-  // trigger deleted the account (non-allowlisted email). Block access here too.
-  if (session && profile === null) {
+  // A query error or network failure must NOT be treated as an unauthorized account.
+  // Show "Connection problem" screen with Retry and Sign out buttons.
+  if (profileStatus === 'error') {
     return (
       <div className="min-h-screen grid place-items-center bg-slate-950 p-6 text-center">
         <div className="max-w-md">
-          <h1 className="text-xl font-bold mb-2">Access not authorized</h1>
-          <p className="text-slate-400 mb-6">
+          <h1 className="text-xl font-bold mb-2 text-slate-100">Connection problem</h1>
+          <p className="text-slate-400 mb-6 text-sm">
+            Unable to connect to the arcade server. Please check your connection and try again.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <button className="btn-primary" onClick={() => void retryProfileLoad()}>
+              Retry
+            </button>
+            <button className="btn-ghost" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show "Access not authorized" only when the query succeeded and returned no row.
+  if (profileStatus === 'missing') {
+    return (
+      <div className="min-h-screen grid place-items-center bg-slate-950 p-6 text-center">
+        <div className="max-w-md">
+          <h1 className="text-xl font-bold mb-2 text-slate-100">Access not authorized</h1>
+          <p className="text-slate-400 mb-6 text-sm">
             This account is not on the HAYA Games allowlist. Sign in with one of
             the authorized email addresses.
           </p>
-          <button className="btn-primary" onClick={() => signOut()}>
+          <button className="btn-primary" onClick={() => void signOut()}>
             Back to login
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (profileStatus === 'loading') {
+    return (
+      <div className="min-h-screen grid place-items-center bg-slate-950">
+        <Loader2 className="h-8 w-8 animate-spin text-amber-400" />
       </div>
     );
   }

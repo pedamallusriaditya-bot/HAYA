@@ -2,10 +2,13 @@ import { createContext, useContext } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import type { Profile } from '../lib/supabase.ts';
 
+export type ProfileStatus = 'loading' | 'ready' | 'missing' | 'error';
+
 export type AuthState = {
   session: Session | null;
   user: User | null;
   profile: Profile | null;
+  profileStatus: ProfileStatus;
   loading: boolean;
   logoutNotice: string | null;
   clearLogoutNotice: () => void;
@@ -13,6 +16,7 @@ export type AuthState = {
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   devSignIn: (email: string, name: string) => void;
   signOut: (reason?: string) => Promise<void>;
+  retryProfileLoad: () => Promise<void>;
   updateProfileState: (updated: Partial<Profile>) => void;
 };
 
