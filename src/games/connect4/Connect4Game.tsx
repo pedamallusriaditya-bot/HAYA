@@ -18,10 +18,13 @@ import {
 } from './engine';
 import { getConnect4BotMove } from './ai';
 import Connect4Board from './Connect4Board';
+import OnlineRoom from './OnlineRoom';
+import { useMultiplayer } from '@/context/MultiplayerContext';
 
 type GameMode = 'choose' | 'bot';
 
 export default function Connect4Game() {
+  const { activeMatch, exitActiveMatch } = useMultiplayer();
   const [mode, setMode] = useState<GameMode>('choose');
   const [selectedLevel, setSelectedLevel] = useState<number>(3); // Default Normal Level 3
   const [playerPiece, setPlayerPiece] = useState<Connect4Piece>('R');
@@ -160,6 +163,21 @@ export default function Connect4Game() {
     const next = arcadeAudio.toggleSound();
     setSoundOn(next);
   };
+
+  // If there is an active direct online match for Connect 4
+  if (activeMatch && activeMatch.gameId === 'connect4') {
+    return (
+      <OnlineRoom
+        matchId={activeMatch.matchId}
+        role={activeMatch.role}
+        opponentName={activeMatch.opponentName}
+        onExit={() => {
+          exitActiveMatch();
+          setMode('choose');
+        }}
+      />
+    );
+  }
 
   // Pre-game selection station
   if (mode === 'choose') {

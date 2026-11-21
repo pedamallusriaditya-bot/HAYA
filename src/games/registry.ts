@@ -143,7 +143,7 @@ export const GAMES: GameMeta[] = [
     description: 'Drop pieces into a 7x6 grid. Connect four in a row - horizontal, vertical or diagonal.',
     mode: 'multi',
     status: 'playable',
-    online: false,
+    online: true,
     icon: Columns3,
     gradient: 'from-rose-500/30 to-amber-500/10',
     rules: ['Drop a piece in any column.', 'Pieces fall to the lowest empty slot.', 'Connect 4 in any direction to win.'],
